@@ -62,15 +62,20 @@ class CustomDataset(Dataset):
             
         return data
     
-def get_dls(root, transformations, batch_size, split = [0.8, 0.2], num_workers = 4):
+def get_dls(root, train_transformations, val_transformations, batch_size, split = [0.8, 0.2], num_workers = 4):
     
-    ds = CustomDataset(root = root, transformations = transformations)
+    ds = CustomDataset(root = root)
     
     total_len = len(ds)
     tr_len = int(total_len * split[0])
     vl_len = total_len - tr_len
     
     tr_ds, vl_ds  = random_split(dataset = ds, lengths = [tr_len, vl_len])
+
+    # add the propper transformations
+    tr_ds.dataset.transformations = train_transformations
+    vl_ds.dataset.transformations = val_transformations
+
     tr_dl, val_dl = DataLoader(tr_ds, batch_size = batch_size, shuffle = True, num_workers = num_workers), DataLoader(vl_ds, batch_size = batch_size, shuffle = False, num_workers = num_workers)
     
     return tr_dl, val_dl, ds.cls_names, ds.cls_counts

@@ -2,6 +2,7 @@
 This is a trainign script which deosn't employ defence
 '''
 from networks.vgg10 import VGG10, VGG10_lighter
+from networks.inception_v3 import InceptionV3
 
 import os, torch, random, shutil, numpy as np, pandas as pd
 from glob import glob; from PIL import Image
@@ -24,13 +25,28 @@ def compute_class_weights(cls_counts):
 
 def train_baseline(model, device, pretraiend_path=None):
     epochs = 20
-    lr = 1e-4
-    batch_size = 16
+    lr = 1e-4 # this is good
+    #lr = 1e-5
+    batch_size = 32
+    num_workers = 8
 
     root = "dataset/raw-img"
     mean, std, size = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 224 # media, deviatai standard, diemsniuenaimaginilor
-    tfs = T.Compose([T.ToTensor(), T.Resize(size = (size, size), antialias = False), T.Normalize(mean = mean, std = std)])
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, transformations = tfs, batch_size = batch_size)
+    val_tfs = T.Compose([T.ToTensor(),
+        T.Resize(size = (size, size),
+        antialias = False),
+        T.Normalize(mean = mean, std = std)])
+    train_tfs = T.Compose([
+        T.RandomHorizontalFlip(p=0.5),
+        T.RandomRotation(degrees=45),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
+        T.ToTensor(),
+        T.RandomResizedCrop(size=(224, 224), scale=(0.7, 1.2)),  
+        T.Resize(size = (size, size),
+        antialias = False),
+        T.Normalize(mean=mean, std=std),
+        ])
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
 
     print(len(tr_dl))
     print(len(val_dl))
@@ -39,7 +55,8 @@ def train_baseline(model, device, pretraiend_path=None):
 
     model = model.to(device)
     if pretraiend_path is not None:
-        model = model.load_state_dict(pretraiend_path)
+        state_dict = torch.load(pretraiend_path)  # Load the state dictionary from the .pth file
+        model.load_state_dict(state_dict)
     
     # Compute class weights
     class_weights = compute_class_weights(cls_counts).to(device)
@@ -126,7 +143,9 @@ if __name__ == '__main__':
 
     #model = VGG10(num_classes=10)
     model = VGG10_lighter(num_classes=10)
+    #model = InceptionV3(num_classes=10)
     device = 'cuda'
+    pretrained_path = None
     
-    train_baseline(model, device)
+    train_baseline(model, device, pretrained_path)
 
