@@ -56,9 +56,9 @@ class CustomDataset(Dataset):
 
         data["qry_im"] = qry_im
         data["qry_gt"] = qry_gt
-        data["pos_im"] = pos_im
-        data["neg_im"] = neg_im
-        data["neg_gt"] = neg_gt
+        data["pos_im"] = pos_im # **** not used for the moment. For normal trining only query is used
+        data["neg_im"] = neg_im # **** not used for the moment. For normal trining only query is used
+        data["neg_gt"] = neg_gt # **** not used for the moment. For normal trining only query is used
             
         return data
     
