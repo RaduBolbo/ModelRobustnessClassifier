@@ -1,7 +1,7 @@
 '''
 This is a trainign script which deosn't employ defence
 '''
-from networks.vgg10 import VGG10, VGG10_lighter
+from networks.vgg10 import VGG10, VGG10_lighter, VGG14_lighterOnlyOneDense
 from networks.inception_v3 import InceptionV3
 
 import os, torch, random, shutil, numpy as np, pandas as pd
@@ -25,8 +25,8 @@ def compute_class_weights(cls_counts):
 
 def train_baseline(model, device, pretraiend_path=None):
     epochs = 20
-    lr = 1e-4 # this is good
-    #lr = 1e-5
+    #lr = 1e-4 # this is good
+    lr = 1e-5
     batch_size = 32
     num_workers = 8
 
@@ -143,9 +143,10 @@ if __name__ == '__main__':
 
     #model = VGG10(num_classes=10)
     model = VGG10_lighter(num_classes=10)
-    #model = InceptionV3(num_classes=10)
+    #model = VGG14_lighterOnlyOneDense(num_classes=10)
     device = 'cuda'
-    pretrained_path = None
+    #pretrained_path = 'checkpoints\VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
+    pretrained_path = 'checkpoints\model_2.pth'
     
     train_baseline(model, device, pretrained_path)
 
