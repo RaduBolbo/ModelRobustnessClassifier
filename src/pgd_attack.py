@@ -1,6 +1,20 @@
+'''
+PGD inspired by FGSM in https://pytorch.org/tutorials/beginner/fgsm_tutorial.html
+'''
+
 import torch
 import torch.nn.functional as F
+from networks.vgg10 import VGG10, VGG10_lighter
 
+import os, torch, random, shutil, numpy as np, pandas as pd
+from glob import glob; from PIL import Image
+Image.MAX_IMAGE_PIXELS = None 
+from torchvision import transforms as T
+torch.manual_seed(2024)
+from dataloaders import get_dls
+
+from tqdm import tqdm
+import pickle
 
 device = 'cuda'
 
@@ -18,6 +32,15 @@ device = 'cuda'
 #         perturbed_image = torch.clamp(perturbed_image, 0, 1)
 
 #     return perturbed_image
+
+def serialize_adv_examples(adv_examples, output_path):
+    try:
+        with open(output_path, 'wb') as f:
+            pickle.dump(adv_examples, f)
+        print(f"Adversarial examples successfully serialized to {output_path}")
+    except Exception as e:
+        print(f"Failed to serialize adversarial examples: {e}")
+
 
 def pgd_attack(model, image, target, epsilon, step_size, num_iterations=40):
     # 1) clone the original image
@@ -55,62 +78,113 @@ def denorm(batch, mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225], siz
 
     return batch * std.view(1, -1, 1, 1) + mean.view(1, -1, 1, 1)
 
-def test(model, device, test_loader, epsilon, step_size, num_iterations):
-    # Accuracy counter
+def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations):
+    batch_size = 1
+    num_workers = 1
+
+    model = model.to(device)
+    if pretraiend_path is not None:
+        state_dict = torch.load(pretraiend_path)  # Load the state dictionary from the .pth file
+        model.load_state_dict(state_dict)
+
+    root = "dataset/raw-img"
+    mean, std, size = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 224 # media, deviatai standard, diemsniuenaimaginilor
+    val_tfs = T.Compose([T.ToTensor(),
+        T.Resize(size = (size, size),
+        antialias = False),
+        T.Normalize(mean = mean, std = std)])
+    train_tfs = T.Compose([
+        T.RandomHorizontalFlip(p=0.5),
+        T.RandomRotation(degrees=45),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
+        T.ToTensor(),
+        T.RandomResizedCrop(size=(224, 224), scale=(0.7, 1.2)),  
+        T.Resize(size = (size, size),
+        antialias = False),
+        T.Normalize(mean=mean, std=std),
+        ])
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
+    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.005], num_workers = num_workers)
+    test_loader = val_dl
+
     correct = 0
+    attacked = 0
     adv_examples = []
 
-    # Loop over all examples in test set
-    for data, target in test_loader:
+    for batch in tqdm(test_loader, desc="Validation"):
+        data = batch["qry_im"].to(device)
+        target = batch["qry_gt"].to(device)
 
-        # Send the data and label to the device
-        data, target = data.to(device), target.to(device)
-
-        # Set requires_grad attribute of tensor. Important for Attack
         data.requires_grad = True
 
-        # Forward pass the data through the model
+        # forward pass
         output = model(data)
-        init_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
+        init_pred = output.max(1, keepdim=True)[1] # get the prediction
 
-        # If the initial prediction is wrong, don't bother attacking, just move on
+        # don't attack if label is already wrong
         if init_pred.item() != target.item():
             continue
 
-        # Restore the data to its original scale
+        # denormalize
         data_denorm = denorm(data)
 
-        # Call PGD Attack
+        # perform PGD
         perturbed_data = pgd_attack(model, data_denorm, target, epsilon, step_size, num_iterations)
 
-        # Reapply normalization
-        perturbed_data_normalized = transforms.Normalize((0.1307,), (0.3081,))(perturbed_data)
+        # renormalize, becaude the image was denormalized and now it has to be sent to the nn again
+        perturbed_data_normalized = T.Normalize(mean=mean, std=std)(perturbed_data)
 
-        # Re-classify the perturbed image
+        # reclassifyu to see if it is now wrong
         output = model(perturbed_data_normalized)
 
-        # Check for success
+        # check for success
         final_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
+        attacked += 1
         if final_pred.item() == target.item():
             correct += 1
-            # Special case for saving 0 epsilon examples
+            #print('correct')
+            # special case for saving 0 epsilon examples
             if epsilon == 0 and len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
         else:
-            # Save some adv examples for visualization later
+            #print('wrong')
+            # save some adv examples for visualization later
             if len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
 
-    # Calculate final accuracy for this epsilon
-    final_acc = correct/float(len(test_loader))
-    print(f"Epsilon: {epsilon}\tTest Accuracy = {correct} / {len(test_loader)} = {final_acc}")
+    final_acc = correct/float(attacked)
+    print(f"Epsilon: {epsilon}\tTest Accuracy = {correct} / {attacked} = {final_acc}")
 
-    # Return the accuracy and an adversarial example
     return final_acc, adv_examples
 
 
+if __name__ == '__main__':
 
+    #model = VGG10(num_classes=10)
+    #pretrained_path = 'checkpoints/VGG10.pth'
+
+    model = VGG10_lighter(num_classes=10)
+    pretrained_path = 'checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
+    #pretrained_path = 'checkpoints/GOOD.pth'
+
+
+    device = 'cuda'
+    # set the attack parameters
+    # Observations:
+    # Obs 1) epsilon = 0.1; step_size = 0.0001; num_iterations = 25 => the classifier begins to have both correct and wrong parameters (maybe epsilon could be lowered anyway to 0.01 or 0.001)
+    epsilon = 0.001
+    step_size = 0.0001
+    num_iterations = 100
+
+    #final_acc, adv_examples = test_pgd(model, pretrained_path, device, 0.001, step_size, num_iterations)
+    
+    epsilons = [0.00010, 0.00025, 0.00050, 0.00075, 0.00100, 0.002500, 0.00500] # **** this may change if somethiong bad is observed
+    for epsilon in epsilons:
+        final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
+        adv_examples_output_path = f'adv_examples/pgd/epsilon={epsilon}_step_size={step_size}_num_iterations={num_iterations}_final_acc={final_acc}.pkl'
+        print(f'Final_ACC = {final_acc} for epsilon = {epsilon}')
+        serialize_adv_examples(adv_examples, adv_examples_output_path)
 
 

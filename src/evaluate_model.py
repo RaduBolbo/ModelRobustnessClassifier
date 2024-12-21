@@ -110,8 +110,8 @@ if __name__ == '__main__':
     #pretrained_path = 'checkpoints/VGG10.pth'
 
     model = VGG10_lighter(num_classes=10)
-    #pretrained_path = 'checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
-    pretrained_path = 'checkpoints/GOOD.pth'
+    pretrained_path = 'checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
+    #pretrained_path = 'checkpoints/GOOD.pth'
 
 
     device = 'cuda'

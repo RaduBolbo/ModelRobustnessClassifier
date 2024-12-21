@@ -76,7 +76,7 @@ def get_dls(root, train_transformations, val_transformations, batch_size, split 
     tr_ds.dataset.transformations = train_transformations
     vl_ds.dataset.transformations = val_transformations
 
-    tr_dl, val_dl = DataLoader(tr_ds, batch_size = batch_size, shuffle = True, num_workers = num_workers), DataLoader(vl_ds, batch_size = batch_size, shuffle = False, num_workers = num_workers)
+    tr_dl, val_dl = DataLoader(tr_ds, batch_size = batch_size, shuffle = True, num_workers = num_workers), DataLoader(vl_ds, batch_size = batch_size, shuffle = True, num_workers = num_workers)
     
     return tr_dl, val_dl, ds.cls_names, ds.cls_counts
 
