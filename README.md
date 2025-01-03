@@ -20,6 +20,11 @@ To run the script:
 bash setup.sh
 ```
 
+Activate the virtual environment:
+```bash
+source myenv/bin/activate
+```
+
 To train the baseline model:
 ```bash
 python src/train_loop_baseline.py 

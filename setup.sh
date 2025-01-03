@@ -108,5 +108,14 @@ create_venv(){
 install_dependencies
 setup_kaggle_credentials
 download_dataset
+
+# Check if libgl1 is installed
+if dpkg -l | grep -q "libgl1"; then
+    echo "libgl1 is already installed."
+else
+    echo "libgl1 is not installed, updating package list and installing libgl1..."
+    sudo apt-get update && sudo apt-get install -y libgl1
+fi
+
 create_venv
 
