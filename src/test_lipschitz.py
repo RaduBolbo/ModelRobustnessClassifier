@@ -56,7 +56,8 @@ def compute_layer_lipschitz(layer):
         return compute_spectral_norm_dense(layer.weight)
     elif isinstance(layer, torch.nn.BatchNorm2d):
         #return layer.weight.abs().max().item()  # # **** TO INVESTIGATE
-        return 1 # **** BatchNorm doesn't happen at inference
+        # **** here it should be gamma / agerage_sigma of the dataset: justa an aproximation.
+        return 1
     elif isinstance(layer, (torch.nn.ReLU, torch.nn.MaxPool2d)):
         return 1.0
     elif isinstance(layer, torch.nn.PReLU):
