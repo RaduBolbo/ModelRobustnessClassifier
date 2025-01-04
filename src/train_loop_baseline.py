@@ -18,6 +18,7 @@ from sklearn.metrics import f1_score
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
 
 torch.manual_seed(2024)
 Image.MAX_IMAGE_PIXELS = None
@@ -34,6 +35,7 @@ def compute_class_weights(cls_counts):
 
 def train_baseline(model, device, pretraiend_path=None):
 
+    writer = SummaryWriter(log_dir="src/runs")
     tr_dl, val_dl, classes, cls_counts = get_dls(
         root=dataset_root,
         train_transformations=train_tfs,
@@ -94,12 +96,17 @@ def train_baseline(model, device, pretraiend_path=None):
             all_labels_train.extend(qry_gt.cpu().numpy())
 
         train_accuracy = correct_train / total_train
+        train_loss = train_loss / len(tr_dl)
         train_f1_scores = f1_score(all_labels_train, all_preds_train, average=None)
+
         print(
-            f"Training Loss: {train_loss / len(tr_dl):.4f}, Training Accuracy: {train_accuracy:.4f}"
+            f"Training Loss: {train_loss:.4f}, Training Accuracy: {train_accuracy:.4f}"
         )
         for cls_idx, f1 in enumerate(train_f1_scores):
             print(f"F1 Score for Class {cls_idx}: {f1:.4f}")
+
+        writer.add_scalar("Loss/train", train_loss, epoch)
+        writer.add_scalar("Accuracy/train", train_accuracy, epoch)
 
         # Validation loop
         model.eval()
@@ -127,15 +134,22 @@ def train_baseline(model, device, pretraiend_path=None):
                 all_labels_val.extend(qry_gt.cpu().numpy())
 
         val_accuracy = correct_val / total_val
+        val_loss = val_loss / len(val_dl)
         val_f1_scores = f1_score(all_labels_val, all_preds_val, average=None)
         print(
-            f"Validation Loss: {val_loss / len(val_dl):.4f}, Validation Accuracy: {val_accuracy:.4f}"
+            f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}"
         )
         for cls_idx, f1 in enumerate(val_f1_scores):
             print(f"F1 Score for Class {cls_idx}: {f1:.4f}")
 
+        writer.add_scalar("Loss/val", val_loss, epoch)
+        writer.add_scalar("Accuracy/val", val_accuracy, epoch)
+
         torch.save(model.state_dict(), f"checkpoints/model_{epoch}.pth")
+
     print("Training complete.")
+    writer.flush()
+    writer.close()
 
 
 if __name__ == "__main__":
@@ -147,4 +161,4 @@ if __name__ == "__main__":
     pretrained_path = "checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth"
     # pretrained_path = 'checkpoints\model_2.pth'
 
-    train_baseline(model, device, pretrained_path)
+    train_baseline(model, device)
