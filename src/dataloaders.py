@@ -1,6 +1,6 @@
 import os, torch, random, shutil, numpy as np, pandas as pd
 from glob import glob
-from PIL import Image
+from PIL import Image, ImageFilter
 
 Image.MAX_IMAGE_PIXELS = None
 from torch.utils.data import random_split, Dataset, DataLoader
@@ -11,17 +11,25 @@ import cv2
 import csv
 import tqdm
 from collections import Counter
+from hyperparameters import *
 
 
 class CustomDataset(Dataset):
 
-    def __init__(self, root, transformations=None, distilled_labels_path=None):
+    def __init__(
+        self,
+        root,
+        transformations=None,
+        distilled_labels_path=None,
+        feature_squeezing_flag=False,
+    ):
 
         self.transformations = transformations
         self.im_paths = glob(f"{root}/*/*.jpeg")
         self.cls_names, self.cls_counts, count = {}, {}, 0
         # self.distilled_labels = {}
         self.distillation_defense_flag = False
+        self.feature_squeezing_flag = feature_squeezing_flag
 
         for idx, im_path in enumerate(self.im_paths):
             cls_name = self.get_cls_name(im_path)
@@ -74,13 +82,20 @@ class CustomDataset(Dataset):
 
         return distilled_labels
 
+    def resample_img(self, img, scale_factor=0.5):
+        new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
+        img = img.resize(new_size, Image.BILINEAR)
+        img = img.resize((img.width * 2, img.height * 2), Image.BILINEAR)
+
+        return img
+
     def __len__(self):
         return len(self.im_paths)
 
     def __getitem__(self, idx):
 
         im_path = self.im_paths[idx]
-        qry_im = Image.open(im_path).convert("RGB")
+        original_image = Image.open(im_path).convert("RGB")
         qry_label = self.get_cls_name(im_path)
 
         pos_im_path, neg_im_path = self.get_pos_neg_im_paths(qry_label=qry_label)
@@ -92,7 +107,7 @@ class CustomDataset(Dataset):
         neg_gt = self.cls_names[self.get_cls_name(neg_im_path)]
 
         if self.transformations is not None:
-            qry_im = self.transformations(qry_im)
+            qry_im = self.transformations(original_image)
             pos_im = self.transformations(pos_im)
             neg_im = self.transformations(neg_im)
 
@@ -113,6 +128,12 @@ class CustomDataset(Dataset):
         if self.distillation_defense_flag:
             distilled_label = self.distilled_labels[im_path]
             data["distilled_label"] = distilled_label
+
+        if self.feature_squeezing_flag:
+            median_img = original_image.filter(ImageFilter.MedianFilter(size=3))
+            resampled_img = self.resample_img(original_image)
+            data["median_filter_img"] = self.transformations(median_img)
+            data["resampled_img"] = self.transformations(resampled_img)
 
         return data
 
@@ -148,9 +169,14 @@ def get_dls(
     split=[0.8, 0.2],
     num_workers=4,
     distilled_labels_path=None,
+    feature_squeezing=False,
 ):
 
-    ds = CustomDataset(root=root, distilled_labels_path=distilled_labels_path)
+    ds = CustomDataset(
+        root=root,
+        distilled_labels_path=distilled_labels_path,
+        feature_squeezing_flag=feature_squeezing,
+    )
 
     total_len = len(ds)
     tr_len = int(total_len * split[0])
@@ -199,7 +225,7 @@ if __name__ == "__main__":
         ]
     )
     tr_dl, val_dl, classes, cls_counts = get_dls(
-        root=root, transformations=tfs, batch_size=batch_size
+        root, train_tfs, val_tfs, batch_size=batch_size
     )
 
     print(len(tr_dl))
