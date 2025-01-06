@@ -3,7 +3,7 @@ from glob import glob
 from PIL import Image, ImageFilter
 
 Image.MAX_IMAGE_PIXELS = None
-from torch.utils.data import random_split, Dataset, DataLoader
+from torch.utils.data import random_split, Dataset, DataLoader, Subset
 from torchvision import transforms as T
 
 torch.manual_seed(2024)
@@ -188,6 +188,9 @@ def get_dls(
     # add the propper transformations
     tr_ds.dataset.transformations = train_transformations
     vl_ds.dataset.transformations = val_transformations
+
+    val_subset_indices = list(range(100))
+    subset_val = Subset(vl_ds, val_subset_indices)
 
     tr_dl, val_dl = DataLoader(
         tr_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers
