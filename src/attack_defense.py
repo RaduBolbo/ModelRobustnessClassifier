@@ -3,6 +3,7 @@ from networks.vgg10 import VGG10_lighter
 from dataloaders import get_dls
 from hyperparameters import *
 from pgd_attack import pgd_attack, denorm
+from ddn_attack import ddn_attack
 import json
 
 import torch
@@ -11,7 +12,7 @@ import tqdm
 
 torch.manual_seed(2024)
 
-ATTACKS = ["PGD", "FGSM"]
+ATTACKS = ["PGD", "DDN"]
 DEFENECES = ["Distillation", "Feat_squeezing", None]
 
 
@@ -19,6 +20,13 @@ DEFENECES = ["Distillation", "Feat_squeezing", None]
 class PGDParams:
     epsilon: float
     step_size: float
+    num_iterations: int
+
+
+@dataclass
+class DDNParams:
+    alpha: float
+    gamma: float
     num_iterations: int
 
 
@@ -37,6 +45,7 @@ class AttackDefenseClassifier:
         dataset_root,
         attack="PGD",
         pgd_params=PGDParams(0.01, 0.001, 250),  # epsilon, step_size, num_iterations
+        ddn_params=DDNParams(0.001, 0.05, 300),  # alpha, gamma, num_iterations
         defence=None,
         device="cuda",
         out_dir="results/",
@@ -45,6 +54,7 @@ class AttackDefenseClassifier:
         self.baseline_model = self._load_model(baseline_model_path)
         self.val_dataloader = self._load_val_dataloader(dataset_root)
         self.pgd_params = pgd_params
+        self.ddn_params = ddn_params
         self.out_dir = out_dir
         os.makedirs(self.out_dir, exist_ok=True)
 
@@ -93,8 +103,8 @@ class AttackDefenseClassifier:
         else:
             ValueError("Dataset path does not exist.")
 
-    def _attack_pgd(self, model, sample):
-        """Perturbs the input with PGD."""
+    def _attack(self, model, sample):
+        """Perturbs the input with PGD or DNN."""
 
         img = sample["qry_im"].to(device)
         label = sample["qry_gt"].to(device)
@@ -111,15 +121,25 @@ class AttackDefenseClassifier:
         # denormalize
         data_denorm = denorm(img)
 
-        # perform PGD
-        perturbed_data = pgd_attack(
-            model,
-            data_denorm,
-            label,
-            self.pgd_params.epsilon,
-            self.pgd_params.step_size,
-            self.pgd_params.num_iterations,
-        )
+        # perform attack
+        if self.attack == "PGD":
+            perturbed_data = pgd_attack(
+                model,
+                data_denorm,
+                label,
+                self.pgd_params.epsilon,
+                self.pgd_params.step_size,
+                self.pgd_params.num_iterations,
+            )
+        elif self.attack == "DDN":
+            perturbed_data, _, _ = ddn_attack(
+                model,
+                data_denorm,
+                label,
+                self.ddn_params.num_iterations,
+                self.ddn_params.alpha,
+                self.ddn_params.gamma,
+            )
 
         # renormalize, because the image was denormalized and now it has to be sent to the nn again
         perturbed_data_normalized = T.Normalize(mean=mean, std=std)(perturbed_data)
@@ -151,14 +171,19 @@ class AttackDefenseClassifier:
 
         return pred
 
+    def _get_attack_filename(self):
+        if self.attack == "PGD":
+            return f"{self.attack}_eps{self.pgd_params.epsilon}_step{self.pgd_params.step_size}_iter{self.pgd_params.num_iterations}"
+        elif self.attack == "DDN":
+            return f"{self.attack}_alpha{self.ddn_params.alpha}_gamma{self.ddn_params.gamma}_iter{self.ddn_params.num_iterations}"
+
     def _dump_metrics_squeezing(
         self, cm: ConfusionMatrix, total_attacks: int, correct_after_attack: int
     ):
         """Dumps metrics in .json file for Feature Squeezing"""
         # create filename
-        if self.attack == "PGD":
-            filename = f"{self.attack}_eps{self.pgd_params.epsilon}_step{self.pgd_params.step_size}_iter{self.pgd_params.num_iterations}"
-        filename = filename + f"_{self.defence}.json"
+        attack_name = self._get_attack_filename()
+        filename = attack_name + f"_{self.defence}.json"
         out_file = os.path.join(self.out_dir, filename)
 
         results_dict = {}
@@ -198,25 +223,22 @@ class AttackDefenseClassifier:
             # print(f"gt: {gt}")
             attack_successful = False
 
-            if self.attack == "PGD":
-                can_attack, perturbed_img = self._attack_pgd(
-                    self.baseline_model, sample
-                )
+            can_attack, perturbed_img = self._attack(self.baseline_model, sample)
 
-                # attack samples where model is right
-                if can_attack:
-                    attacks += 1
-                    attacked_output = self.baseline_model(perturbed_img)
-                    attacked_pred = attacked_output.max(1, keepdim=True)[1].item()
+            # attack samples where model is right
+            if can_attack:
+                attacks += 1
+                attacked_output = self.baseline_model(perturbed_img)
+                attacked_pred = attacked_output.max(1, keepdim=True)[1].item()
 
-                    # check if the attack was successful
-                    if attacked_pred == gt:
-                        correct += 1
-                        attack_successful = False
-                    else:
-                        attack_successful = True
+                # check if the attack was successful
+                if attacked_pred == gt:
+                    correct += 1
+                    attack_successful = False
                 else:
-                    continue
+                    attack_successful = True
+            else:
+                continue
 
             if self.defence == "Feat_squeezing":
                 attack_detected = self._defend_feat_squeezing(
@@ -271,7 +293,7 @@ if __name__ == "__main__":
     pgd_step_size = 0.0001
 
     attack_def_obj = AttackDefenseClassifier(
-        pretrained_path, dataset_root, defence="Feat_squeezing"
+        pretrained_path, dataset_root, attack="DDN", defence="Feat_squeezing"
     )
 
     attack_def_obj.attack_defend()
