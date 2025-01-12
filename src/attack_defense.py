@@ -292,11 +292,18 @@ if __name__ == "__main__":
     pgd_iter = 250
     pgd_step_size = 0.0001
 
-    attack_def_obj = AttackDefenseClassifier(
-        pretrained_path, dataset_root, attack="DDN", defence="Feat_squeezing"
-    )
-
-    attack_def_obj.attack_defend()
+    # attck with pgd
+    for eps in pgd_epsilon:
+        pgd_params = PGDParams(eps, pgd_step_size, pgd_iter)
+        # defence: Feature Squeezing
+        processor_sqz = AttackDefenseClassifier(
+            pretrained_path,
+            dataset_root,
+            attack="PGD",
+            pgd_params=pgd_params,
+            defence="Feat_squeezing",
+        )
+        processor_sqz.attack_defend()
     # PGD attack, Feature Squeezing defence
     # Number of attacks: 4631
     # Number of correct samples after PGD attack (no defence): 4616
