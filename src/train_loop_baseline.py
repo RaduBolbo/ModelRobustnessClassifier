@@ -68,6 +68,12 @@ def train_baseline(model, device, pretraiend_path=None):
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
 
+        if epoch == 10:
+            new_lr = 1e-5
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = new_lr
+            print(f"Learning rate updated to {new_lr}")
+
         # Training loop
         model.train()
         train_loss = 0.0
