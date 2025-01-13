@@ -3,9 +3,9 @@ from torchvision import transforms as T
 # paths
 dataset_root = "dataset/raw-img"
 
-epochs = 20
+epochs = 15
 # lr = 1e-4 # this is good
-lr = 1e-5
+lr = 1e-4
 batch_size = 32
 num_workers = 8
 device = "cuda"
