@@ -57,6 +57,19 @@ class ConfusionMatrix:
             # input incorrectly flagged as no attack
             self.fn += 1
 
+    def get_accuracy(self):
+        total = self.tp + self.tn + self.fp + self.fn
+        accuracy = (self.tp + self.tn) / total if total > 0 else 0
+        return accuracy
+
+    def get_precision(self):
+        precision = self.tp / (self.tp + self.fp) if (self.tp + self.fp) > 0 else 0
+        return precision
+
+    def get_recall(self):
+        recall = self.tp / (self.tp + self.fn) if (self.tp + self.fn) > 0 else 0
+        return recall
+
 
 class AttackDefenseClassifier:
     def __init__(
@@ -264,18 +277,14 @@ class AttackDefenseClassifier:
             defense_name = self.defence
             # compute accuracy, precision and recall for defense
             cm = defence_metr
-            total = cm.tp + cm.tn + cm.fp + cm.fn
-            accuracy = (cm.tp + cm.tn) / total if total > 0 else 0
-            precision = cm.tp / (cm.tp + cm.fp) if (cm.tp + cm.fp) > 0 else 0
-            recall = cm.tp / (cm.tp + cm.fn) if (cm.tp + cm.fn) > 0 else 0
             defense_metrics["defence"] = self.defence
             defense_metrics["TP_defense"] = cm.tp
             defense_metrics["TN_defense"] = cm.tn
             defense_metrics["FP_defense"] = cm.fp
             defense_metrics["FN_defense"] = cm.fn
-            defense_metrics["accuracy"] = accuracy
-            defense_metrics["precision"] = precision
-            defense_metrics["recall"] = recall
+            defense_metrics["accuracy"] = cm.get_accuracy()
+            defense_metrics["precision"] = cm.get_precision()
+            defense_metrics["recall"] = cm.get_recall()
             defense_metrics["comment"] = "Attack detection metrics"
         elif self.defence == "Distillation" and isinstance(defence_metr, int):
             defense_name = f"{self.defence}_temp{self.distillation_temp}"
