@@ -167,7 +167,8 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         T.Normalize(mean=mean, std=std),
         ])
     #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.01], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.95, 0.05], num_workers = num_workers)
+    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.9995, 0.0005], num_workers = num_workers)
     test_loader = val_dl
 
     correct = 0
@@ -198,15 +199,16 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         attacked += 1
         if not success_status:
             correct += 1
+        print('success_status: ', success_status)
         
-        # print('perturbed_data ', torch.max(perturbed_data))
-        # print('data ', torch.max(data))
-        # data = denorm(data)
-        # perturbed_data = denorm(perturbed_data)
-        # print(final_pred.item(), target.item())
-        # torchvision.utils.save_image(data, 'data.png')
-        # torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
-        # torchvision.utils.save_image((data-perturbed_data)*1500, 'dif.png')
+        print('perturbed_data ', torch.max(perturbed_data))
+        print('data ', torch.max(data))
+        data = denorm(data)
+        perturbed_data = denorm(perturbed_data)
+        print(final_pred.item(), target.item())
+        torchvision.utils.save_image(data, 'data.png')
+        torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
+        torchvision.utils.save_image((data-perturbed_data)*1500, 'dif.png')
 
 
         # **** uncomment these to find the right hyperaparameters for the attack
@@ -217,9 +219,9 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
     final_acc = correct / float(attacked) # this should be 0 if the K iterations were enough
     avg_norm = np.mean(adv_norms)
     median_norm = np.median(adv_norms)
-    print(f"Test Accuracy = {correct} / {attacked} = {final_acc}")
-    print(f"Average L2 Norm: {avg_norm}")
-    print(f"Median L2 Norm: {median_norm}")
+    # print(f"Test Accuracy = {correct} / {attacked} = {final_acc}")
+    # print(f"Average L2 Norm: {avg_norm}")
+    # print(f"Median L2 Norm: {median_norm}")
 
     return final_acc, avg_norm, median_norm
 
@@ -236,8 +238,8 @@ if __name__ == '__main__':
     device = 'cuda'
 
     num_iterations = 300
-    alpha = 0.001
-    gamma = 0.05
+    alpha = 0.05
+    gamma = 0.2
 
     final_acc, avg_norm, median_norm = test_ddn(model, pretrained_path, device, num_iterations, alpha, gamma)
     print('final_acc: ', final_acc)

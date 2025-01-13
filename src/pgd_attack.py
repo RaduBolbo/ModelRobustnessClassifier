@@ -184,15 +184,16 @@ if __name__ == '__main__':
     # set the attack parameters
     # Observations:
     # Obs 1) epsilon = 0.1; step_size = 0.0001; num_iterations = 25 => the classifier begins to have both correct and wrong parameters (maybe epsilon could be lowered anyway to 0.01 or 0.001)
-    epsilon = 0.001
-    step_size = 0.0001
+    epsilon = 0.001 # 0.001 correct; 
+    step_size = 0.001
     num_iterations = 100
 
     #final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
 
     #final_acc, adv_examples = test_pgd(model, pretrained_path, device, 0.001, step_size, num_iterations)
     
-    epsilons = [0.00010, 0.00025, 0.00050, 0.00075, 0.00100, 0.002500, 0.00500] # **** this may change if somethiong bad is observed
+    #epsilons = [0.00010, 0.00025, 0.00050, 0.00075, 0.00100, 0.002500, 0.00500, 0.00750, 0.001] # **** this may change if somethiong bad is observed
+    epsilons = [0.0025, 0.0050, 0.0075, 0.0100, 0.01250, 0.01500, 0.01750] # **** this may change if somethiong bad is observed
     for epsilon in epsilons:
         final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
         adv_examples_output_path = f'adv_examples/pgd/epsilon={epsilon}_step_size={step_size}_num_iterations={num_iterations}_final_acc={final_acc}.pkl'
