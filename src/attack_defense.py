@@ -284,10 +284,12 @@ class AttackDefenseClassifier:
             defense_metrics["TN_defense"] = self.confusion_matrix.tn
             defense_metrics["FP_defense"] = self.confusion_matrix.fp
             defense_metrics["FN_defense"] = self.confusion_matrix.fn
+
             defense_metrics["accuracy"] = self.confusion_matrix.get_accuracy()
             defense_metrics["precision"] = self.confusion_matrix.get_precision()
             defense_metrics["recall"] = self.confusion_matrix.get_recall()
             defense_metrics["comment"] = "Attack detection metrics"
+
         elif self.defence == "Distillation":
             defense_name = f"{self.defence}_temp{self.distillation_temp}"
             defense_metrics["defence"] = self.defence
