@@ -154,14 +154,14 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
             if len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
-            print('perturbed_data ', torch.max(perturbed_data))
-            print('data ', torch.max(data))
-            data = denorm(data)
-            perturbed_data = denorm(perturbed_data)
-            print(final_pred.item(), target.item())
-            torchvision.utils.save_image(data, 'data.png')
-            torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
-            torchvision.utils.save_image(data-perturbed_data, 'dif.png')
+            # print('perturbed_data ', torch.max(perturbed_data))
+            # print('data ', torch.max(data))
+            # data = denorm(data)
+            # perturbed_data = denorm(perturbed_data)
+            # print(final_pred.item(), target.item())
+            # torchvision.utils.save_image(data, 'data.png')
+            # torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
+            # torchvision.utils.save_image((data-perturbed_data)*250, 'dif.png')
 
     final_acc = correct/float(attacked)
     print(f"Epsilon: {epsilon}\tTest Accuracy = {correct} / {attacked} = {final_acc}")
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     # set the attack parameters
     # Observations:
     # Obs 1) epsilon = 0.1; step_size = 0.0001; num_iterations = 25 => the classifier begins to have both correct and wrong parameters (maybe epsilon could be lowered anyway to 0.01 or 0.001)
-    epsilon = 0.001
+    epsilon = 0.005
     step_size = 0.0001
     num_iterations = 100
 
