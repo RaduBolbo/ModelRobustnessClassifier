@@ -87,6 +87,7 @@ device = 'cuda'
 #     return perturbed_image
 
 def ddn_attack(model, image, target, num_iterations, alpha, gamma):
+    model.eval()
     delta = torch.zeros_like(image).to(device)
     epsilon = 0.1 * torch.ones(image.size(0), device=device) 
     succes_status = False

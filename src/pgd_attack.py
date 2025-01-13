@@ -44,6 +44,7 @@ def serialize_adv_examples(adv_examples, output_path):
 
 
 def pgd_attack(model, image, target, epsilon, step_size, num_iterations=40):
+    model.eval()
     # 1) clone the original image
     perturbed_image = image.clone().detach().requires_grad_(True)
 
@@ -143,13 +144,13 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
         attacked += 1
         if final_pred.item() == target.item():
             correct += 1
-            print('correct')
+            #print('correct')
             # special case for saving 0 epsilon examples
             if epsilon == 0 and len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
         else:
-            print('wrong')
+            #print('wrong')
             # save some adv examples for visualization later
             if len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
