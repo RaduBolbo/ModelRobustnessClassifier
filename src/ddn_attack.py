@@ -110,7 +110,7 @@ def ddn_attack(model, image, target, num_iterations, alpha, gamma):
         delta = delta.renorm(p=2, dim=0, maxnorm=epsilon.item())
 
         # perturb image, then clip
-        perturbed_image = torch.clamp(image + delta, 0, 1)
+        #perturbed_image = torch.clamp(image + delta, 0, 1) # nroamlization doens't bring data to [0, 1]
 
         with torch.no_grad():
             output = model(perturbed_image)

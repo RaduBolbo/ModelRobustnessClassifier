@@ -10,6 +10,7 @@ import os, torch, random, shutil, numpy as np, pandas as pd
 from glob import glob; from PIL import Image
 Image.MAX_IMAGE_PIXELS = None 
 from torchvision import transforms as T
+import torchvision
 torch.manual_seed(2024)
 from dataloaders import get_dls
 
@@ -62,8 +63,8 @@ def pgd_attack(model, image, target, epsilon, step_size, num_iterations=40):
         # b) reproject if the perturbation to be at maximum of epsilon magnitude (clamp is element-wise so that works)
         perturbed_image = torch.clamp(perturbed_image, image - epsilon, image + epsilon)
 
-        # c) clamp again to ensure this is not outside the image value range.
-        perturbed_image = torch.clamp(perturbed_image, 0, 1)
+        # c) clamp again to ensure this is not outside the image value range. # but... th eimage range is not [0, 1] so don't apply 
+        #perturbed_image = torch.clamp(perturbed_image, 0, 1)
 
         perturbed_image = perturbed_image.clone().detach().requires_grad_(True) # re-enable gradient requires because I need them for the next iteration
 
@@ -126,33 +127,41 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
             continue
 
         # denormalize
-        data_denorm = denorm(data)
+        #data = denorm(data)
 
         # perform PGD
-        perturbed_data = pgd_attack(model, data_denorm, target, epsilon, step_size, num_iterations)
+        perturbed_data = pgd_attack(model, data, target, epsilon, step_size, num_iterations)
 
         # renormalize, becaude the image was denormalized and now it has to be sent to the nn again
-        perturbed_data_normalized = T.Normalize(mean=mean, std=std)(perturbed_data)
+        #perturbed_data = T.Normalize(mean=mean, std=std)(perturbed_data)
 
         # reclassifyu to see if it is now wrong
-        output = model(perturbed_data_normalized)
+        output = model(perturbed_data)
 
         # check for success
         final_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
         attacked += 1
         if final_pred.item() == target.item():
             correct += 1
-            #print('correct')
+            print('correct')
             # special case for saving 0 epsilon examples
             if epsilon == 0 and len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
         else:
-            #print('wrong')
+            print('wrong')
             # save some adv examples for visualization later
             if len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
+            print('perturbed_data ', torch.max(perturbed_data))
+            print('data ', torch.max(data))
+            data = denorm(data)
+            perturbed_data = denorm(perturbed_data)
+            print(final_pred.item(), target.item())
+            torchvision.utils.save_image(data, 'data.png')
+            torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
+            torchvision.utils.save_image(data-perturbed_data, 'dif.png')
 
     final_acc = correct/float(attacked)
     print(f"Epsilon: {epsilon}\tTest Accuracy = {correct} / {attacked} = {final_acc}")
@@ -177,6 +186,8 @@ if __name__ == '__main__':
     epsilon = 0.001
     step_size = 0.0001
     num_iterations = 100
+
+    final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
 
     #final_acc, adv_examples = test_pgd(model, pretrained_path, device, 0.001, step_size, num_iterations)
     
