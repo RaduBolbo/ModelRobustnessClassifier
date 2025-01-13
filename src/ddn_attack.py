@@ -8,6 +8,7 @@ Image.MAX_IMAGE_PIXELS = None
 from torchvision import transforms as T
 torch.manual_seed(2024)
 from dataloaders import get_dls
+import torchvision
 
 from tqdm import tqdm
 import pickle
@@ -110,7 +111,7 @@ def ddn_attack(model, image, target, num_iterations, alpha, gamma):
         delta = delta.renorm(p=2, dim=0, maxnorm=epsilon.item())
 
         # perturb image, then clip
-        perturbed_image = torch.clamp(image + delta, 0, 1)
+        #perturbed_image = torch.clamp(image + delta, 0, 1) # nroamlization doens't bring data to [0, 1]
 
         with torch.no_grad():
             output = model(perturbed_image)
@@ -187,20 +188,26 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         if init_pred.item() != target.item():
             continue
 
-        # denorm
-        data_denorm = denorm(data)
         # perform DDN attack
-        perturbed_data, success_status, perturbation_norm = ddn_attack(model, data_denorm, target, num_iterations, alpha, gamma)
+        perturbed_data, success_status, perturbation_norm = ddn_attack(model, data, target, num_iterations, alpha, gamma)
         # compute L2 norm of perturbation
-        #perturbation_norm = torch.norm((data_denorm - perturbed_data).view(data.size(0), -1), dim=1)
         adv_norms.append(perturbation_norm)
-        perturbed_data_normalized = T.Normalize(mean=mean, std=std)(perturbed_data)
-        output = model(perturbed_data_normalized)
+        output = model(perturbed_data)
 
         final_pred = output.max(1, keepdim=True)[1]
         attacked += 1
         if not success_status:
             correct += 1
+        
+        # print('perturbed_data ', torch.max(perturbed_data))
+        # print('data ', torch.max(data))
+        # data = denorm(data)
+        # perturbed_data = denorm(perturbed_data)
+        # print(final_pred.item(), target.item())
+        # torchvision.utils.save_image(data, 'data.png')
+        # torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
+        # torchvision.utils.save_image((data-perturbed_data)*1500, 'dif.png')
+
 
         # **** uncomment these to find the right hyperaparameters for the attack
         #print('perturbation_norm.item(): ', perturbation_norm)
