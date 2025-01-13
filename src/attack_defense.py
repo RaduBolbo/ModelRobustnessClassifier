@@ -114,6 +114,7 @@ class AttackDefenseClassifier:
         self.correct_after_defence = 0
         # confusion matrix for Feature Squeezing
         self.confusion_matrix = ConfusionMatrix()
+        self.attack_successful = 0
 
     def _load_model(self, model_path):
         """Loads model."""
@@ -164,23 +165,23 @@ class AttackDefenseClassifier:
             return False, torch.zeros([1, 3, size, size])
 
         # denormalize
-        data_denorm = denorm(img)
+        # data_denorm = denorm(img)
 
         # perform attack
         if self.attack == "PGD":
             perturbed_img = pgd_attack(
                 model,
-                data_denorm,
+                img,
                 label,
                 self.pgd_params.epsilon,
                 self.pgd_params.step_size,
                 self.pgd_params.num_iterations,
             )
-            perturbed_img = norm(perturbed_img)
+            # perturbed_img = norm(perturbed_img)
         elif self.attack == "DDN":
             perturbed_data, success, _, last_perturbed_data = ddn_attack(
                 model,
-                data_denorm,
+                img,
                 label,
                 self.ddn_params.num_iterations,
                 self.ddn_params.alpha,
@@ -325,6 +326,7 @@ class AttackDefenseClassifier:
                     self.correct_after_attack += 1
                     attack_successful = False
                 else:
+                    self.attack_successful += 1
                     attack_successful = True
             else:
                 continue
@@ -347,6 +349,7 @@ class AttackDefenseClassifier:
         print(
             f"Number of correct samples after {self.attack} attack (no defence): {self.correct_after_attack}"
         )
+        print(f"SUccessful attacks: {self.attack_successful}")
 
 
 if __name__ == "__main__":
@@ -356,8 +359,8 @@ if __name__ == "__main__":
 
     # pgd_hyperparameters
     pgd_epsilon = [0.01, 0.02, 0.03, 0.04, 0.05]
-    pgd_iter = 250
-    pgd_step_size = 0.001
+    pgd_iter = 100
+    pgd_step_size = 0.0001
 
     # attack with pgd
     # for eps in pgd_epsilon:
@@ -377,7 +380,7 @@ if __name__ == "__main__":
         pretrained_path,
         dataset_root,
         attack="PGD",
-        defence="Feat_squeezing",
+        defence="Distillation",
         pgd_params=pgd_params,
         distillation_model="/home/ModelRobustnessClassifier/src/checkpoints/models_temp_1/model_14.pth",
     )
