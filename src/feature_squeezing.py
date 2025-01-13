@@ -5,13 +5,19 @@ from networks.vgg10 import VGG10_lighter
 
 import torch
 from tqdm import tqdm
+import torch.nn as nn
+import numpy as np
+from torchvision.transforms import ToPILImage
+from PIL import Image, ImageFilter
+
+torch.manual_seed(2024)
 
 
 def perform_pgd(model, sample):
     # pgd attack parameters
-    epsilon = 0.001
-    step_size = 0.0001
-    num_iterations = 100
+    epsilon = 0.01
+    step_size = 0.001
+    num_iterations = 250
 
     img = sample["qry_im"].to(device)
     label = sample["qry_gt"].to(device)
@@ -39,7 +45,19 @@ def perform_pgd(model, sample):
     return (True, perturbed_data_normalized)
 
 
-def feat_squeezing(model, model_path, dataset_root):
+def tensor_to_pil(img_tensor):
+    return ToPILImage()(img_tensor.detach().cpu().squeeze())
+
+
+def resample_img(img, scale_factor=0.5):
+    new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
+    img = img.resize(new_size, Image.BILINEAR)
+    img = img.resize((img.width * 2, img.height * 2), Image.BILINEAR)
+
+    return img
+
+
+def feat_squeezing(model, model_path, dataset_root, thresh=1.0):
     batch_size = 1
     num_workers = 1
 
@@ -49,6 +67,7 @@ def feat_squeezing(model, model_path, dataset_root):
             model_path
         )  # Load the state dictionary from the .pth file
         model.load_state_dict(state_dict)
+    model.eval()
 
     _, val_dl, classes, cls_counts = get_dls(
         root=dataset_root,
@@ -61,7 +80,16 @@ def feat_squeezing(model, model_path, dataset_root):
     )
 
     correct = 0
-    attacked = 0
+    total_attacks = 0
+    successful_attacks_count = 0
+    attack_detected_count = 0
+
+    succesful_attack = False
+    attack_detected = False
+    tp = 0
+    tn = 0
+    fp = 0
+    fn = 0
 
     for sample in tqdm(val_dl, desc="Validation"):
         can_attack, perturbed_img = perform_pgd(model, sample)
@@ -69,28 +97,67 @@ def feat_squeezing(model, model_path, dataset_root):
         if not can_attack:
             print("Can't attack for current sample, model is already wrong. Moving on.")
         else:
-            output = model(perturbed_img)
-            output_filtered = model(sample["median_filter_img"].to(device))
-            output_resampled = model(sample["resampled_img"].to(device))
+            total_attacks += 1
+            output = model(perturbed_img.to(device))
+            pred = output.max(1, keepdim=True)[1].item()
 
-            # check for success
-            # get the index of the max log-probability
-            final_pred = output.max(1, keepdim=True)[1]
-            pred_median_filter = output_filtered.max(1, keepdim=True)[1]
-            pred_resampled_img = output_resampled.max(1, keepdim=True)[1]
-            print(f"Perturbed input prediction: {final_pred.item()}")
-            print(f"Median filter input prediction: {pred_median_filter.item()}")
-            print(f"Resampled input prediction: {pred_resampled_img.item()}")
-            print(f"GT label: {sample['qry_gt'].item()}")
-            attacked += 1
-            if final_pred.item() == sample["qry_gt"].item():
-                print("Attack not successful!")
-                correct += 1
+            if pred == sample["qry_gt"].item():
+                succesful_attack = False
             else:
-                print("Attack successful!")
+                succesful_attack = True
+                successful_attacks_count += 1
 
-    final_acc = correct / float(attacked)
-    print(final_acc)
+            # squeezed inputs
+            perturbed_img_pil = tensor_to_pil(denorm(perturbed_img))
+            perturbed_img_median = perturbed_img_pil.filter(
+                ImageFilter.MedianFilter(size=3)
+            )
+            perturbed_img_resample = resample_img(perturbed_img_pil)
+
+            # apply validation transformations
+            median_normalized = val_tfs(perturbed_img_median).to(device).unsqueeze(0)
+            resample_normalized = (
+                val_tfs(perturbed_img_resample).to(device).unsqueeze(0)
+            )
+
+            # run inference on squeezed inputs
+            median_out = model(median_normalized)
+            resample_out = model(resample_normalized)
+
+            out_softmax = nn.functional.softmax(output).detach().cpu().numpy().squeeze()
+            median_softmax = (
+                nn.functional.softmax(median_out).detach().cpu().numpy().squeeze()
+            )
+            resampled_softmax = (
+                nn.functional.softmax(resample_out).detach().cpu().numpy().squeeze()
+            )
+
+            median_l1 = np.linalg.norm(out_softmax - median_softmax, ord=1)
+            resampled_l1 = np.linalg.norm(out_softmax - resampled_softmax, ord=1)
+            l1 = max(median_l1, resampled_l1)
+
+            if l1 < thresh:
+                attack_detected = False
+            else:
+                attack_detected = True
+                attack_detected_count += 1
+
+            if attack_detected and succesful_attack:
+                tp += 1
+            elif attack_detected and not succesful_attack:
+                fp += 1
+            elif not attack_detected and succesful_attack:
+                fn += 1
+            elif not attack_detected and not succesful_attack:
+                tn += 1
+
+    print(f"Total attacks: {total_attacks}")
+    print(f"Successful attacks: {successful_attacks_count}")
+    print(f"Attacks detected: {attack_detected_count}")
+    print(f"tp: {tp}")
+    print(f"tn: {tn}")
+    print(f"fp: {fp}")
+    print(f"fn: {fn}")
 
 
 if __name__ == "__main__":
