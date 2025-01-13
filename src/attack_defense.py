@@ -107,6 +107,14 @@ class AttackDefenseClassifier:
         else:
             ValueError(f"Choose one of the following defences: {DEFENECES}")
 
+        self.total_attacks = 0
+        # number of correctly classified samples after attack
+        self.correct_after_attack = 0
+        # number of correctly classified samples after defence (Distillation)
+        self.correct_after_defence = 0
+        # confusion matrix for Feature Squeezing
+        self.confusion_matrix = ConfusionMatrix()
+
     def _load_model(self, model_path):
         """Loads model."""
         if os.path.exists(model_path):
@@ -248,49 +256,45 @@ class AttackDefenseClassifier:
         elif self.attack == "DDN":
             return f"{self.attack}_alpha{self.ddn_params.alpha}_gamma{self.ddn_params.gamma}_iter{self.ddn_params.num_iterations}"
 
-    def _compute_metrics(
-        self,
-        total_attacks: int,
-        correct_after_attack: int,
-        defence_metr=Union[ConfusionMatrix, int],
-    ):
+    def _compute_metrics(self):
         """Dumps metrics in .json file for Feature Squeezing"""
         results = {}
         attack_metrics = {}
         defense_metrics = {}
 
         results["total_samples"] = len(self.val_dataloader)
-        results["total_attacks"] = total_attacks
+        results["total_attacks"] = self.total_attacks
 
         # attack metrics
         attack_name = self._get_attack_filename()
         attack_metrics["attack"] = attack_name
-        attack_metrics["correct_after_attack"] = correct_after_attack
-        attack_metrics["model_accuracy"] = correct_after_attack / total_attacks
+        attack_metrics["correct_after_attack"] = self.correct_after_attack
+        attack_metrics["model_accuracy"] = (
+            self.correct_after_attack / self.total_attacks
+        )
         attack_metrics["comment"] = (
             "This represents the number of samples correctly classified by the model after attack."
         )
 
-        if self.defence == "Feat_squeezing" and isinstance(
-            defence_metr, ConfusionMatrix
-        ):
+        if self.defence == "Feat_squeezing":
             defense_name = self.defence
             # compute accuracy, precision and recall for defense
-            cm = defence_metr
             defense_metrics["defence"] = self.defence
-            defense_metrics["TP_defense"] = cm.tp
-            defense_metrics["TN_defense"] = cm.tn
-            defense_metrics["FP_defense"] = cm.fp
-            defense_metrics["FN_defense"] = cm.fn
-            defense_metrics["accuracy"] = cm.get_accuracy()
-            defense_metrics["precision"] = cm.get_precision()
-            defense_metrics["recall"] = cm.get_recall()
+            defense_metrics["TP_defense"] = self.confusion_matrix.tp
+            defense_metrics["TN_defense"] = self.confusion_matrix.tn
+            defense_metrics["FP_defense"] = self.confusion_matrix.fp
+            defense_metrics["FN_defense"] = self.confusion_matrix.fn
+            defense_metrics["accuracy"] = self.confusion_matrix.get_accuracy()
+            defense_metrics["precision"] = self.confusion_matrix.get_precision()
+            defense_metrics["recall"] = self.confusion_matrix.get_recall()
             defense_metrics["comment"] = "Attack detection metrics"
-        elif self.defence == "Distillation" and isinstance(defence_metr, int):
+        elif self.defence == "Distillation":
             defense_name = f"{self.defence}_temp{self.distillation_temp}"
             defense_metrics["defence"] = self.defence
-            defense_metrics["correct after defense"] = defence_metr
-            defense_metrics["model_accuracy"] = defence_metr / total_attacks
+            defense_metrics["correct after defense"] = self.correct_after_defence
+            defense_metrics["model_accuracy"] = (
+                self.correct_after_defence / self.total_attacks
+            )
             defense_metrics["comment"] = "Model classification accuracy after defense."
 
         results["attack_metrics"] = attack_metrics
@@ -302,15 +306,6 @@ class AttackDefenseClassifier:
             json.dump(results, json_file, indent=4)
 
     def attack_defend(self):
-        # total number of attacks
-        attacks = 0
-
-        # number of correctly predicted outputs after attack
-        correct = 0
-        correct_defense = 0
-        confusion_matrix = ConfusionMatrix()
-        attack_successul_count = 0
-
         for sample in tqdm.tqdm(self.val_dataloader, desc="Validation set"):
             gt = sample["qry_gt"].item()
             attack_successful = False
@@ -319,16 +314,15 @@ class AttackDefenseClassifier:
 
             # attack samples where model is right
             if can_attack:
-                attacks += 1
+                self.total_attacks += 1
                 attacked_output = self.baseline_model(perturbed_img)
                 attacked_pred = attacked_output.max(1, keepdim=True)[1].item()
 
                 # check if the attack was successful
                 if attacked_pred == gt:
-                    correct += 1
+                    self.correct_after_attack += 1
                     attack_successful = False
                 else:
-                    attack_successul_count += 1
                     attack_successful = True
             else:
                 continue
@@ -337,27 +331,20 @@ class AttackDefenseClassifier:
                 attack_detected = self._defend_feat_squeezing(
                     self.baseline_model, perturbed_img, attacked_output
                 )
-                confusion_matrix.update(attack_successful, attack_detected)
+                self.confusion_matrix.update(attack_successful, attack_detected)
 
             elif self.defence == "Distillation":
                 pred = self._defend_distillation(self.distillation_model, perturbed_img)
 
                 if pred == gt:
-                    correct_defense += 1
+                    self.correct_after_defence += 1
 
-        if self.defence == "Feat_squeezing":
-            self._compute_metrics(attacks, correct, confusion_matrix)
-        elif self.defence == "Distillation":
-            self._compute_metrics(attacks, correct, correct_defense)
+        self._compute_metrics()
 
-        print(f"Number of attacks: {attacks}")
+        print(f"Number of attacks: {self.total_attacks}")
         print(
-            f"Number of correct samples after {self.attack} attack (no defence): {correct}"
+            f"Number of correct samples after {self.attack} attack (no defence): {self.correct_after_attack}"
         )
-        print(
-            f"Number of correct samples after {self.defence} defence: {correct_defense}"
-        )
-        print(f"Successsful attacks: {attack_successul_count}")
 
 
 if __name__ == "__main__":
