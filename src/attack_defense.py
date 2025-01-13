@@ -308,14 +308,11 @@ class AttackDefenseClassifier:
         # number of correctly predicted outputs after attack
         correct = 0
         correct_defense = 0
-        # number of detected attacks by the defence
-        detected_attacks = 0
         confusion_matrix = ConfusionMatrix()
         attack_successul_count = 0
 
         for sample in tqdm.tqdm(self.val_dataloader, desc="Validation set"):
             gt = sample["qry_gt"].item()
-            # print(f"gt: {gt}")
             attack_successful = False
 
             can_attack, perturbed_img = self._attack(self.baseline_model, sample)
@@ -361,11 +358,6 @@ class AttackDefenseClassifier:
             f"Number of correct samples after {self.defence} defence: {correct_defense}"
         )
         print(f"Successsful attacks: {attack_successul_count}")
-
-        # print(f"defense fp: {confusion_matrix.fp}")
-        # print(f"defense tp: {confusion_matrix.tp}")
-        # print(f"defense tn: {confusion_matrix.tn}")
-        # print(f"defense fn: {confusion_matrix.fn}")
 
 
 if __name__ == "__main__":
