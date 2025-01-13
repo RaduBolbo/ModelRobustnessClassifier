@@ -104,8 +104,8 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
         antialias = False),
         T.Normalize(mean=mean, std=std),
         ])
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
-    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.005], num_workers = num_workers)
+    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.01], num_workers = num_workers)
     test_loader = val_dl
 
     correct = 0
@@ -183,11 +183,11 @@ if __name__ == '__main__':
     # set the attack parameters
     # Observations:
     # Obs 1) epsilon = 0.1; step_size = 0.0001; num_iterations = 25 => the classifier begins to have both correct and wrong parameters (maybe epsilon could be lowered anyway to 0.01 or 0.001)
-    epsilon = 0.005
+    epsilon = 0.001
     step_size = 0.0001
     num_iterations = 100
 
-    final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
+    #final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
 
     #final_acc, adv_examples = test_pgd(model, pretrained_path, device, 0.001, step_size, num_iterations)
     
