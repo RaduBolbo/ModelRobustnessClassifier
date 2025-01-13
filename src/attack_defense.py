@@ -13,6 +13,7 @@ import torch
 import os
 import tqdm
 import numpy as np
+from typing import Union
 
 torch.manual_seed(2024)
 norm = T.Normalize(mean=mean, std=std)
@@ -42,6 +43,20 @@ class ConfusionMatrix:
     fp: int = 0
     fn: int = 0
 
+    def update(self, attack_successful, attack_detected):
+        if attack_detected and attack_successful:
+            # attack correctly detected
+            self.tp += 1
+        elif attack_detected and not attack_successful:
+            # input incorrectly flagged as attack
+            self.fp += 1  #
+        elif not attack_detected and not attack_successful:
+            # input correctly flagged as no attack
+            self.tn += 1
+        elif not attack_detected and attack_successful:
+            # input incorrectly flagged as no attack
+            self.fn += 1
+
 
 class AttackDefenseClassifier:
     def __init__(
@@ -52,6 +67,8 @@ class AttackDefenseClassifier:
         pgd_params=PGDParams(0.01, 0.001, 250),  # epsilon, step_size, num_iterations
         ddn_params=DDNParams(0.001, 0.05, 300),  # alpha, gamma, num_iterations
         defence=None,
+        distillation_model=None,
+        distillation_temp=1,
         device="cuda",
         out_dir="results/",
     ):
@@ -60,6 +77,8 @@ class AttackDefenseClassifier:
         self.val_dataloader = self._load_val_dataloader(dataset_root)
         self.pgd_params = pgd_params
         self.ddn_params = ddn_params
+        self.distillation_model = distillation_model
+        self.distillation_temp = distillation_temp
         self.out_dir = out_dir
         os.makedirs(self.out_dir, exist_ok=True)
 
@@ -151,6 +170,7 @@ class AttackDefenseClassifier:
                 perturbed_img = last_perturbed_data
             else:
                 perturbed_img = perturbed_data
+            perturbed_img = norm(perturbed_img)
 
         return (True, perturbed_img)
 
@@ -215,15 +235,13 @@ class AttackDefenseClassifier:
         elif self.attack == "DDN":
             return f"{self.attack}_alpha{self.ddn_params.alpha}_gamma{self.ddn_params.gamma}_iter{self.ddn_params.num_iterations}"
 
-    def _dump_metrics_squeezing(
-        self, cm: ConfusionMatrix, total_attacks: int, correct_after_attack: int
+    def _compute_metrics(
+        self,
+        total_attacks: int,
+        correct_after_attack: int,
+        defence_metr=Union[ConfusionMatrix, int],
     ):
         """Dumps metrics in .json file for Feature Squeezing"""
-        # create filename
-        attack_name = self._get_attack_filename()
-        filename = attack_name + f"_{self.defence}.json"
-        out_file = os.path.join(self.out_dir, filename)
-
         results = {}
         attack_metrics = {}
         defense_metrics = {}
@@ -232,6 +250,7 @@ class AttackDefenseClassifier:
         results["total_attacks"] = total_attacks
 
         # attack metrics
+        attack_name = self._get_attack_filename()
         attack_metrics["attack"] = attack_name
         attack_metrics["correct_after_attack"] = correct_after_attack
         attack_metrics["model_accuracy"] = correct_after_attack / total_attacks
@@ -239,24 +258,37 @@ class AttackDefenseClassifier:
             "This represents the number of samples correctly classified by the model after attack."
         )
 
-        # compute accuracy, precision and recall for defense
-        total = cm.tp + cm.tn + cm.fp + cm.fn
-        accuracy = (cm.tp + cm.tn) / total if total > 0 else 0
-        precision = cm.tp / (cm.tp + cm.fp) if (cm.tp + cm.fp) > 0 else 0
-        recall = cm.tp / (cm.tp + cm.fn) if (cm.tp + cm.fn) > 0 else 0
-        defense_metrics["defence"] = self.defence
-        defense_metrics["TP_defense"] = cm.tp
-        defense_metrics["TN_defense"] = cm.tn
-        defense_metrics["FP_defense"] = cm.fp
-        defense_metrics["FN_defense"] = cm.fn
-        defense_metrics["accuracy"] = accuracy
-        defense_metrics["precision"] = precision
-        defense_metrics["recall"] = recall
-        defense_metrics["comment"] = "Attack detection metrics"
+        if self.defence == "Feat_squeezing" and isinstance(
+            defence_metr, ConfusionMatrix
+        ):
+            defense_name = self.defence
+            # compute accuracy, precision and recall for defense
+            cm = defence_metr
+            total = cm.tp + cm.tn + cm.fp + cm.fn
+            accuracy = (cm.tp + cm.tn) / total if total > 0 else 0
+            precision = cm.tp / (cm.tp + cm.fp) if (cm.tp + cm.fp) > 0 else 0
+            recall = cm.tp / (cm.tp + cm.fn) if (cm.tp + cm.fn) > 0 else 0
+            defense_metrics["defence"] = self.defence
+            defense_metrics["TP_defense"] = cm.tp
+            defense_metrics["TN_defense"] = cm.tn
+            defense_metrics["FP_defense"] = cm.fp
+            defense_metrics["FN_defense"] = cm.fn
+            defense_metrics["accuracy"] = accuracy
+            defense_metrics["precision"] = precision
+            defense_metrics["recall"] = recall
+            defense_metrics["comment"] = "Attack detection metrics"
+        elif self.defence == "Distillation" and isinstance(defence_metr, int):
+            defense_name = f"{self.defence}_temp{self.distillation_temp}"
+            defense_metrics["defence"] = self.defence
+            defense_metrics["correct after defense"] = defence_metr
+            defense_metrics["model_accuracy"] = defence_metr / total_attacks
+            defense_metrics["comment"] = "Model classification accuracy after defense."
 
         results["attack_metrics"] = attack_metrics
         results["defence_metrics"] = defense_metrics
 
+        filename = attack_name + "_" + defense_name + ".json"
+        out_file = os.path.join(self.out_dir, filename)
         with open(out_file, "w") as json_file:
             json.dump(results, json_file, indent=4)
 
@@ -299,42 +331,32 @@ class AttackDefenseClassifier:
                 attack_detected = self._defend_feat_squeezing(
                     self.baseline_model, perturbed_img, attacked_output
                 )
+                confusion_matrix.update(attack_successful, attack_detected)
 
-                if attack_detected and attack_successful:
-                    # attack correctly detected
-                    confusion_matrix.tp += 1
-                elif attack_detected and not attack_successful:
-                    # input incorrectly flagged as attack
-                    confusion_matrix.fp += 1  #
-                elif not attack_detected and not attack_successful:
-                    # input correctly flagged as no attack
-                    confusion_matrix.tn += 1
-                elif not attack_detected and attack_successful:
-                    # input incorrectly flagged as no attack
-                    confusion_matrix.fn += 1
             elif self.defence == "Distillation":
-                model_path = "/home/ModelRobustnessClassifier/src/checkpoints/models_temp_5/model_14.pth"
-                pred = self._defend_distillation(model_path, perturbed_img)
+                pred = self._defend_distillation(self.distillation_model, perturbed_img)
 
                 if pred == gt:
                     correct_defense += 1
 
         if self.defence == "Feat_squeezing":
-            self._dump_metrics_squeezing(confusion_matrix, attacks, correct)
+            self._compute_metrics(attacks, correct, confusion_matrix)
+        elif self.defence == "Distillation":
+            self._compute_metrics(attacks, correct, correct_defense)
 
         print(f"Number of attacks: {attacks}")
         print(
             f"Number of correct samples after {self.attack} attack (no defence): {correct}"
         )
         print(
-            f"Number of detected attacks after {self.defence} defence: {detected_attacks}"
+            f"Number of correct samples after {self.defence} defence: {correct_defense}"
         )
         print(f"Successsful attacks: {attack_successul_count}")
 
-        print(f"defense fp: {confusion_matrix.fp}")
-        print(f"defense tp: {confusion_matrix.tp}")
-        print(f"defense tn: {confusion_matrix.tn}")
-        print(f"defense fn: {confusion_matrix.fn}")
+        # print(f"defense fp: {confusion_matrix.fp}")
+        # print(f"defense tp: {confusion_matrix.tp}")
+        # print(f"defense tn: {confusion_matrix.tn}")
+        # print(f"defense fn: {confusion_matrix.fn}")
 
 
 if __name__ == "__main__":
@@ -345,7 +367,7 @@ if __name__ == "__main__":
     # pgd_hyperparameters
     pgd_epsilon = [0.01, 0.02, 0.03, 0.04, 0.05]
     pgd_iter = 250
-    pgd_step_size = 0.0001
+    pgd_step_size = 0.001
 
     # attack with pgd
     # for eps in pgd_epsilon:
@@ -360,7 +382,13 @@ if __name__ == "__main__":
     #     )
     #     processor_sqz.attack_defend()
 
+    pgd_params = PGDParams(pgd_epsilon[1], pgd_step_size, pgd_iter)
     processor = AttackDefenseClassifier(
-        pretrained_path, dataset_root, attack="PGD", defence="Feat_squeezing"
+        pretrained_path,
+        dataset_root,
+        attack="PGD",
+        defence="Feat_squeezing",
+        pgd_params=pgd_params,
+        distillation_model="/home/ModelRobustnessClassifier/src/checkpoints/models_temp_1/model_14.pth",
     )
     processor.attack_defend()
