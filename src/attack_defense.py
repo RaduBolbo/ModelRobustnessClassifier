@@ -5,12 +5,17 @@ from hyperparameters import *
 from pgd_attack import pgd_attack, denorm
 from ddn_attack import ddn_attack
 import json
+from torchvision.transforms import ToPILImage
+from PIL import Image, ImageFilter
+import torch.nn as nn
 
 import torch
 import os
 import tqdm
+import numpy as np
 
 torch.manual_seed(2024)
+norm = T.Normalize(mean=mean, std=std)
 
 ATTACKS = ["PGD", "DDN"]
 DEFENECES = ["Distillation", "Feat_squeezing", None]
@@ -123,7 +128,7 @@ class AttackDefenseClassifier:
 
         # perform attack
         if self.attack == "PGD":
-            perturbed_data = pgd_attack(
+            perturbed_img = pgd_attack(
                 model,
                 data_denorm,
                 label,
@@ -131,8 +136,9 @@ class AttackDefenseClassifier:
                 self.pgd_params.step_size,
                 self.pgd_params.num_iterations,
             )
+            perturbed_img = norm(perturbed_img)
         elif self.attack == "DDN":
-            perturbed_data, _, _ = ddn_attack(
+            perturbed_data, success, _, last_perturbed_data = ddn_attack(
                 model,
                 data_denorm,
                 label,
@@ -141,23 +147,55 @@ class AttackDefenseClassifier:
                 self.ddn_params.gamma,
             )
 
-        # renormalize, because the image was denormalized and now it has to be sent to the nn again
-        perturbed_data_normalized = T.Normalize(mean=mean, std=std)(perturbed_data)
+            if success:
+                perturbed_img = last_perturbed_data
+            else:
+                perturbed_img = perturbed_data
 
-        return (True, perturbed_data_normalized)
+        return (True, perturbed_img)
 
-    def _defend_feat_squeezing(self, model, sample, initial_pred):
+    def _resample_img(self, img, scale_factor=0.5):
+        new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
+        img = img.resize(new_size, Image.BILINEAR)
+        img = img.resize((img.width * 2, img.height * 2), Image.BILINEAR)
+
+        return img
+
+    def _tensor_to_pil(self, tensor):
+        return ToPILImage()(denorm(tensor).detach().cpu().squeeze())
+
+    def _defend_feat_squeezing(self, model, perturbed_img, initial_pred, thresh=1.0):
         """Defends model with Feature squeezing. Return False if no attack is detected and true if attack is detected"""
-        median_filter_img = sample["median_filter_img"].to(self.device)
-        median_out = model(median_filter_img)
-        median_pred = median_out.max(1, keepdim=True)[1].item()
+        # median filter and resampling for feature squeezing
+        perturbed_pil = self._tensor_to_pil(perturbed_img)
+        median_img = perturbed_pil.filter(ImageFilter.MedianFilter(size=3))
+        resampled_img = self._resample_img(perturbed_pil)
 
-        resampled_img = sample["resampled_img"].to(self.device)
-        resampled_out = model(resampled_img)
-        resampled_pred = resampled_out.max(1, keepdim=True)[1].item()
+        # apply val transformations
+        median_tesnor = val_tfs(median_img).unsqueeze(0).to(self.device)
+        resampled_tensor = val_tfs(resampled_img).unsqueeze(0).to(self.device)
 
-        # check if original prediction and squeezed predictions are the same
-        if initial_pred == median_pred or initial_pred == resampled_pred:
+        # inference and softmax
+        median_out = (
+            nn.functional.softmax(model(median_tesnor)).detach().cpu().numpy().squeeze()
+        )
+        resampled_out = (
+            nn.functional.softmax(model(resampled_tensor))
+            .detach()
+            .cpu()
+            .numpy()
+            .squeeze()
+        )
+
+        # compute L1-norm
+        init_pred_softmax = (
+            nn.functional.softmax(initial_pred).detach().cpu().numpy().squeeze()
+        )
+        median_l1 = np.linalg.norm(init_pred_softmax - median_out, ord=1)
+        resampled_l1 = np.linalg.norm(init_pred_softmax - resampled_out, ord=1)
+        max_l1 = max(median_l1, resampled_l1)
+
+        if max_l1 < thresh:
             # no attack detected
             return False
         else:
@@ -186,26 +224,41 @@ class AttackDefenseClassifier:
         filename = attack_name + f"_{self.defence}.json"
         out_file = os.path.join(self.out_dir, filename)
 
-        results_dict = {}
-        results_dict["total_samples"] = len(self.val_dataloader)
-        results_dict["total_attacks"] = total_attacks
-        results_dict["correct_after_attack"] = correct_after_attack
-        results_dict["TP_defense"] = cm.tp
-        results_dict["TN_defense"] = cm.tn
-        results_dict["FP_defense"] = cm.fp
-        results_dict["FN_defense"] = cm.fn
+        results = {}
+        attack_metrics = {}
+        defense_metrics = {}
 
+        results["total_samples"] = len(self.val_dataloader)
+        results["total_attacks"] = total_attacks
+
+        # attack metrics
+        attack_metrics["attack"] = attack_name
+        attack_metrics["correct_after_attack"] = correct_after_attack
+        attack_metrics["model_accuracy"] = correct_after_attack / total_attacks
+        attack_metrics["comment"] = (
+            "This represents the number of samples correctly classified by the model after attack."
+        )
+
+        # compute accuracy, precision and recall for defense
         total = cm.tp + cm.tn + cm.fp + cm.fn
         accuracy = (cm.tp + cm.tn) / total if total > 0 else 0
         precision = cm.tp / (cm.tp + cm.fp) if (cm.tp + cm.fp) > 0 else 0
         recall = cm.tp / (cm.tp + cm.fn) if (cm.tp + cm.fn) > 0 else 0
+        defense_metrics["defence"] = self.defence
+        defense_metrics["TP_defense"] = cm.tp
+        defense_metrics["TN_defense"] = cm.tn
+        defense_metrics["FP_defense"] = cm.fp
+        defense_metrics["FN_defense"] = cm.fn
+        defense_metrics["accuracy"] = accuracy
+        defense_metrics["precision"] = precision
+        defense_metrics["recall"] = recall
+        defense_metrics["comment"] = "Attack detection metrics"
 
-        results_dict["accuracy"] = accuracy
-        results_dict["precision"] = precision
-        results_dict["recall"] = recall
+        results["attack_metrics"] = attack_metrics
+        results["defence_metrics"] = defense_metrics
 
         with open(out_file, "w") as json_file:
-            json.dump(results_dict, json_file, indent=4)
+            json.dump(results, json_file, indent=4)
 
     def attack_defend(self):
         # total number of attacks
@@ -217,6 +270,7 @@ class AttackDefenseClassifier:
         # number of detected attacks by the defence
         detected_attacks = 0
         confusion_matrix = ConfusionMatrix()
+        attack_successul_count = 0
 
         for sample in tqdm.tqdm(self.val_dataloader, desc="Validation set"):
             gt = sample["qry_gt"].item()
@@ -236,13 +290,14 @@ class AttackDefenseClassifier:
                     correct += 1
                     attack_successful = False
                 else:
+                    attack_successul_count += 1
                     attack_successful = True
             else:
                 continue
 
             if self.defence == "Feat_squeezing":
                 attack_detected = self._defend_feat_squeezing(
-                    self.baseline_model, sample, attacked_pred
+                    self.baseline_model, perturbed_img, attacked_output
                 )
 
                 if attack_detected and attack_successful:
@@ -274,7 +329,7 @@ class AttackDefenseClassifier:
         print(
             f"Number of detected attacks after {self.defence} defence: {detected_attacks}"
         )
-        print(f"Number of ocrrect samples after attack (defence): {correct_defense}")
+        print(f"Successsful attacks: {attack_successul_count}")
 
         print(f"defense fp: {confusion_matrix.fp}")
         print(f"defense tp: {confusion_matrix.tp}")
@@ -292,19 +347,20 @@ if __name__ == "__main__":
     pgd_iter = 250
     pgd_step_size = 0.0001
 
-    # attck with pgd
-    for eps in pgd_epsilon:
-        pgd_params = PGDParams(eps, pgd_step_size, pgd_iter)
-        # defence: Feature Squeezing
-        processor_sqz = AttackDefenseClassifier(
-            pretrained_path,
-            dataset_root,
-            attack="PGD",
-            pgd_params=pgd_params,
-            defence="Feat_squeezing",
-        )
-        processor_sqz.attack_defend()
-    # PGD attack, Feature Squeezing defence
-    # Number of attacks: 4631
-    # Number of correct samples after PGD attack (no defence): 4616
-    # Number of detected attacks after Feat_squeezing defence: 1169
+    # attack with pgd
+    # for eps in pgd_epsilon:
+    #     pgd_params = PGDParams(eps, pgd_step_size, pgd_iter)
+    #     # defence: Feature Squeezing
+    #     processor_sqz = AttackDefenseClassifier(
+    #         pretrained_path,
+    #         dataset_root,
+    #         attack="PGD",
+    #         pgd_params=pgd_params,
+    #         defence="Feat_squeezing",
+    #     )
+    #     processor_sqz.attack_defend()
+
+    processor = AttackDefenseClassifier(
+        pretrained_path, dataset_root, attack="PGD", defence="Feat_squeezing"
+    )
+    processor.attack_defend()
