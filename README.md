@@ -4,8 +4,12 @@ In this project we explore the robustness of a deep learning classification mode
 
 ## Attacks
 
-1. 
-2. 
+1. **Projected Gradient Descent (PGD)**  
+   PGD is a powerful adversarial attack that iteratively updates the input by taking steps in the direction of the gradient of the loss function, ensuring each perturbation stays within a specified norm constraint (e.g., \(L_\infty\) or \(L_2\)). It is often used to evaluate the robustness of machine learning models.
+
+2. **Decoupled Direction and Norm (DDN)**  
+   DDN is designed to minimize the \(L_2\) norm of adversarial perturbations. It works by decoupling the direction and norm adjustments during the attack process, iteratively reducing the perturbation magnitude while maintaining adversarial success. This makes DDN particularly effective for generating imperceptible adversarial examples.
+
 
 ## Defenses
 
