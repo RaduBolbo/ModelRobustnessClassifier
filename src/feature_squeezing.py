@@ -9,6 +9,7 @@ import torch.nn as nn
 import numpy as np
 from torchvision.transforms import ToPILImage
 from PIL import Image, ImageFilter
+from matplotlib import pyplot as plt
 
 torch.manual_seed(2024)
 
@@ -55,6 +56,13 @@ def resample_img(img, scale_factor=0.5):
     img = img.resize((img.width * 2, img.height * 2), Image.BILINEAR)
 
     return img
+
+
+def bit_reduction(img, bits=4):
+    img_np = np.array(img) / 255.0
+    img_np = np.round(img_np * (2**bits - 1))
+    img_np = (img_np / (2**bits - 1) * 255.0).astype(np.uint8)
+    return Image.fromarray(img_np)
 
 
 def feat_squeezing(model, model_path, dataset_root, thresh=1.0):
@@ -113,6 +121,7 @@ def feat_squeezing(model, model_path, dataset_root, thresh=1.0):
                 ImageFilter.MedianFilter(size=3)
             )
             perturbed_img_resample = resample_img(perturbed_img_pil)
+            perturbed_img_reduced = bit_reduction(perturbed_img_pil)
 
             # apply validation transformations
             median_normalized = val_tfs(perturbed_img_median).to(device).unsqueeze(0)
@@ -120,9 +129,12 @@ def feat_squeezing(model, model_path, dataset_root, thresh=1.0):
                 val_tfs(perturbed_img_resample).to(device).unsqueeze(0)
             )
 
+            reduced_normalized = val_tfs(perturbed_img_reduced).to(device).unsqueeze(0)
+
             # run inference on squeezed inputs
             median_out = model(median_normalized)
             resample_out = model(resample_normalized)
+            reduced_out = model(reduced_normalized)
 
             out_softmax = nn.functional.softmax(output).detach().cpu().numpy().squeeze()
             median_softmax = (
@@ -131,10 +143,14 @@ def feat_squeezing(model, model_path, dataset_root, thresh=1.0):
             resampled_softmax = (
                 nn.functional.softmax(resample_out).detach().cpu().numpy().squeeze()
             )
+            reduced_softmax = (
+                nn.functional.softmax(reduced_out).detach().cpu().numpy().squeeze()
+            )
 
             median_l1 = np.linalg.norm(out_softmax - median_softmax, ord=1)
             resampled_l1 = np.linalg.norm(out_softmax - resampled_softmax, ord=1)
-            l1 = max(median_l1, resampled_l1)
+            reduced_l1 = np.linalg.norm(out_softmax - reduced_softmax, ord=1)
+            l1 = max(median_l1, resampled_l1, reduced_l1)
 
             if l1 < thresh:
                 attack_detected = False
