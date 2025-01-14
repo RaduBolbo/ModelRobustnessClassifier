@@ -18,6 +18,8 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 from torchvision import transforms as T
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
+
 torch.manual_seed(2024)
 from dataloaders import get_dls
 
@@ -28,121 +30,60 @@ from sklearn.metrics import f1_score
 import csv
 
 
-def compute_distilled_labels(model, device, pretraiend_path):
-    if pretraiend_path is None:
-        raise ValueError("pretrained_path can't be None")
+def loss_function(logits, target):
+    """CrossEntropyLoss. The pytorch implementation applies
+    softmax internally but for distillation defense,
+    softmax with temperature is needed."""
+    if target.ndimension() == 1:
+        # needs one hot encoding (for validation; labels are not soft but categorical)
+        one_hot = torch.zeros(target.size(0), 10, dtype=torch.float32).to(device)
+        one_hot.scatter_(1, target.unsqueeze(1), 1)
+        return -(one_hot * F.log_softmax(logits, dim=1)).sum(dim=1).mean()
+    else:
+        return -(target * F.log_softmax(logits, dim=1)).sum(dim=1).mean()
 
-    # hyperparameters
-    temperatures = [1, 5, 10, 20]
-    batch_size = 1
-    num_workers = 1
-    root = "dataset/raw-img"
-    csv_fields = ["img_path", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
-    # create directory for saving the distilled labels
-    save_dir = os.path.join(
-        os.path.split(os.path.dirname(__file__))[0], "distilled_labels"
-    )
-    os.makedirs(save_dir, exist_ok=True)
+def train(
+    train_dl,
+    val_dl,
+    class_weights,
+    device="cuda",
+    temperature=50,
+    model_type="teacher",
+    teacher_model=None,
+):
+    if model_type == "student" and teacher_model is None:
+        ValueError("Provide a teacher model.")
 
-    mean, std, size = (
-        [0.485, 0.456, 0.406],
-        [0.229, 0.224, 0.225],
-        224,
-    )  # media, deviatai standard, diemsniuenaimaginilor
+    print(f"Training distillation {model_type} model for temperature {temperature}")
 
-    val_tfs = T.Compose(
-        [
-            T.ToTensor(),
-            T.Resize(size=(size, size), antialias=False),
-            T.Normalize(mean=mean, std=std),
-        ]
-    )
-
-    tr_dl, val_dl, classes, cls_counts = get_dls(
-        root=root,
-        train_transformations=val_tfs,
-        val_transformations=val_tfs,
-        batch_size=batch_size,
-        split=[1],
-        num_workers=num_workers,
-    )
-
-    print(len(tr_dl))
-    print(len(val_dl))
-    print(classes)
-    print(cls_counts)
-
-    # load the model
-    model = model.to(device)
-    state_dict = torch.load(pretraiend_path)
-    model.load_state_dict(state_dict)
-    model.eval()
-
-    for temp in temperatures:
-        print(f"Computing labels for softmax with temperature {temp}.")
-        file_name = f"labels_temp_{temp}.csv"
-        file_path = os.path.join(save_dir, file_name)
-
-        with open(file_path, "w") as f:
-            writer = csv.writer(f, delimiter=",", lineterminator="\n")
-            # add column names
-            writer.writerow(csv_fields)
-
-            with torch.no_grad():
-                for batch in tqdm(tr_dl, desc="Validation"):
-                    qry_im = batch["qry_im"].to(device)
-                    img_path = batch["im_path"]
-
-                    outputs = model(qry_im)
-                    softmax_outputs = (
-                        nn.functional.softmax(outputs / temp, dim=1)
-                        .detach()
-                        .cpu()[0]
-                        .tolist()
-                    )
-
-                    softmax_outputs.insert(0, img_path[0])
-                    writer.writerow(softmax_outputs)
-
-def train_distillation_defence(model, device, distillation_path=None):
-    
-    _, filename = os.path.split(distillation_path)
-    temp = filename.split(".")[0].split("_")[-1]
-    
-    print(f"Training distillation model for temperature {temp}")
-    runs_path = os.path.join("src/runs", f"distil_temp_{temp}")
-    model_dir = os.path.join(f"src/checkpoints/models_temp_{temp}")
+    # define paths
+    runs_path = os.path.join("src/runs", f"distil_temp_{temperature}")
+    model_dir = os.path.join(f"src/checkpoints_distillation/")
     os.makedirs(model_dir, exist_ok=True)
-    
-    writer = SummaryWriter(log_dir=runs_path)
-    tr_dl, val_dl, classes, cls_counts = get_dls(
-        root=dataset_root,
-        train_transformations=train_tfs,
-        val_transformations=val_tfs,
-        batch_size=batch_size,
-        split=[0.8, 0.2],
-        num_workers=num_workers,
-        distilled_labels_path=distillation_path
-    )
 
+    writer = SummaryWriter(log_dir=runs_path)
+    # instantiate model
+    model = VGG10_lighter(num_classes=10)
     model = model.to(device)
 
-    # Compute class weights
-    class_weights = compute_class_weights(cls_counts).to(device)
+    if model_type == "student":
+        # load teacher model
+        teacher_model = teacher_model.to(device)
+        teacher_model.eval()
 
-    # Loss function with weights
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = loss_function
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     # Track metrics
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
 
+        # decrtease learning rate fater 10 epochs
         if epoch == 10:
             new_lr = 1e-5
             for param_group in optimizer.param_groups:
-                param_group['lr'] = new_lr
+                param_group["lr"] = new_lr
             print(f"Learning rate updated to {new_lr}")
 
         # Training loop
@@ -152,20 +93,29 @@ def train_distillation_defence(model, device, distillation_path=None):
         total_train = 0
         all_preds_train = []
         all_labels_train = []
-        for batch in tqdm(tr_dl, desc="Training"):
-            optimizer.zero_grad()
 
+        for batch in tqdm(train_dl, desc="Training"):
+            optimizer.zero_grad()
             qry_im = batch["qry_im"].to(device)
-            qry_gt = batch["qry_gt"].to(device)
-            distil_label = batch["distilled_label"].to(device)
+
+            if model_type == "teacher":
+                qry_gt = batch["qry_gt"].to(device)
+            else:
+                # model is student, get soft labels
+                out = teacher_model(qry_im)
+                qry_gt = nn.functional.softmax(out / temperature, dim=1)
 
             outputs = model(qry_im)
-            loss = criterion(outputs, distil_label)
+            loss = criterion(outputs / temperature, qry_gt)
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item()
             _, preds = torch.max(outputs, 1)
+
+            if model_type == "student":
+                qry_gt = torch.max(qry_gt, 1)[1]
+
             correct_train += (preds == qry_gt).sum().item()
             total_train += qry_gt.size(0)
 
@@ -223,20 +173,53 @@ def train_distillation_defence(model, device, distillation_path=None):
         writer.add_scalar("Loss/val", val_loss, epoch)
         writer.add_scalar("Accuracy/val", val_accuracy, epoch)
 
-        model_path = os.path.join(model_dir, f"model_{epoch}.pth")
-
-        torch.save(model.state_dict(), model_path)
+    model_path = os.path.join(model_dir, f"{model_type}_temp{temperature}.pth")
+    torch.save(model.state_dict(), model_path)
 
     print("Training complete.")
     writer.flush()
     writer.close()
 
+    return model_path
+
 
 if __name__ == "__main__":
 
-    model = VGG10_lighter(num_classes=10)
-    pretrained_path = "/home/ModelRobustnessClassifier/checkpoints/model_14.pth"
     device = "cuda"
+    tr_dl, val_dl, classes, cls_counts = get_dls(
+        root=dataset_root,
+        train_transformations=train_tfs,
+        val_transformations=val_tfs,
+        batch_size=batch_size,
+        split=[0.8, 0.2],
+        num_workers=num_workers,
+    )
+    class_weights = compute_class_weights(cls_counts).to(device)
+    temps = [20, 50, 70]
 
-    # compute_distilled_labels(model, device, pretrained_path)
-    train_distillation_defence(model, device, "/home/ModelRobustnessClassifier/distilled_labels/labels_temp_10.csv")
+    for temp in temps:
+        # train teacher
+        teacher_path = train(
+            tr_dl,
+            val_dl,
+            class_weights,
+            device="cuda",
+            temperature=temp,
+            model_type="teacher",
+            teacher_model=None,
+        )
+
+        # train student
+        teacher_network = VGG10_lighter(num_classes=10)
+        state_dict = torch.load(teacher_path)
+        teacher_network.load_state_dict(state_dict)
+
+        student_path = train(
+            tr_dl,
+            val_dl,
+            class_weights,
+            device="cuda",
+            temperature=temp,
+            model_type="student",
+            teacher_model=teacher_network,
+        )
