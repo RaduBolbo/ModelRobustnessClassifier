@@ -16,6 +16,7 @@ from dataloaders import get_dls
 
 from tqdm import tqdm
 import pickle
+import torchattacks
 
 device = 'cuda'
 
@@ -44,6 +45,7 @@ def serialize_adv_examples(adv_examples, output_path):
 
 
 def pgd_attack(model, image, target, epsilon, step_size, num_iterations=40):
+    model.eval()
     # 1) clone the original image
     perturbed_image = image.clone().detach().requires_grad_(True)
 
@@ -104,8 +106,8 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
         antialias = False),
         T.Normalize(mean=mean, std=std),
         ])
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
-    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.005], num_workers = num_workers)
+    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.01], num_workers = num_workers)
     test_loader = val_dl
 
     correct = 0
@@ -143,13 +145,13 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
         attacked += 1
         if final_pred.item() == target.item():
             correct += 1
-            print('correct')
+            #print('correct')
             # special case for saving 0 epsilon examples
             if epsilon == 0 and len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
                 adv_examples.append( (init_pred.item(), final_pred.item(), adv_ex) )
         else:
-            print('wrong')
+            #print('wrong')
             # save some adv examples for visualization later
             if len(adv_examples) < 5:
                 adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
@@ -168,6 +170,43 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
 
     return final_acc, adv_examples
 
+def test_pgd_with_torchattacks(model, test_loader, epsilon, steps, step_size, device):
+    model.eval()
+
+    attack = torchattacks.PGD(model, eps=epsilon, alpha=step_size, steps=steps)
+    
+    correct = 0
+    attacked = 0
+    adv_examples = []
+
+    for batch in tqdm(test_loader, desc="Validation"):
+        data = batch["qry_im"].to(device)
+        target = batch["qry_gt"].to(device)
+
+        output = model(data)
+        init_pred = output.max(1, keepdim=True)[1]
+        if init_pred.item() != target.item():
+            continue
+
+        perturbed_data = attack(data, target)
+
+        output = model(perturbed_data)
+        final_pred = output.max(1, keepdim=True)[1]
+
+        attacked += 1
+        if final_pred.item() == target.item():
+            correct += 1
+            if epsilon == 0 and len(adv_examples) < 5:
+                adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
+                adv_examples.append((init_pred.item(), final_pred.item(), adv_ex))
+        else:
+            if len(adv_examples) < 5:
+                adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
+                adv_examples.append((init_pred.item(), final_pred.item(), adv_ex))
+
+    final_acc = correct / float(attacked)
+    print(f"Epsilon: {epsilon}\tTest Accuracy = {correct} / {attacked} = {final_acc}")
+    return final_acc, adv_examples
 
 if __name__ == '__main__':
 
@@ -183,15 +222,16 @@ if __name__ == '__main__':
     # set the attack parameters
     # Observations:
     # Obs 1) epsilon = 0.1; step_size = 0.0001; num_iterations = 25 => the classifier begins to have both correct and wrong parameters (maybe epsilon could be lowered anyway to 0.01 or 0.001)
-    epsilon = 0.005
-    step_size = 0.0001
+    epsilon = 0.001 # 0.001 correct; 
+    step_size = 0.001
     num_iterations = 100
 
-    final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
+    #final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
 
     #final_acc, adv_examples = test_pgd(model, pretrained_path, device, 0.001, step_size, num_iterations)
     
-    epsilons = [0.00010, 0.00025, 0.00050, 0.00075, 0.00100, 0.002500, 0.00500] # **** this may change if somethiong bad is observed
+    #epsilons = [0.00010, 0.00025, 0.00050, 0.00075, 0.00100, 0.002500, 0.00500, 0.00750, 0.001] # **** this may change if somethiong bad is observed
+    epsilons = [0.0025, 0.0050, 0.0075, 0.0100, 0.01250, 0.01500, 0.01750] # **** this may change if somethiong bad is observed
     for epsilon in epsilons:
         final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
         adv_examples_output_path = f'adv_examples/pgd/epsilon={epsilon}_step_size={step_size}_num_iterations={num_iterations}_final_acc={final_acc}.pkl'

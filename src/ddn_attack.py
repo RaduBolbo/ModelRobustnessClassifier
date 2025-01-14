@@ -87,6 +87,7 @@ device = 'cuda'
 #     return perturbed_image
 
 def ddn_attack(model, image, target, num_iterations, alpha, gamma):
+    model.eval()
     delta = torch.zeros_like(image).to(device)
     epsilon = 0.1 * torch.ones(image.size(0), device=device) 
     succes_status = False
@@ -165,8 +166,8 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         antialias = False),
         T.Normalize(mean=mean, std=std),
         ])
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
-    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.95, 0.05], num_workers = num_workers)
+    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.99, 0.01], num_workers = num_workers)
     #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.9995, 0.0005], num_workers = num_workers)
     test_loader = val_dl
 
@@ -198,6 +199,7 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         attacked += 1
         if not success_status:
             correct += 1
+        # print('success_status: ', success_status)
         
         # print('perturbed_data ', torch.max(perturbed_data))
         # print('data ', torch.max(data))
@@ -217,9 +219,9 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
     final_acc = correct / float(attacked) # this should be 0 if the K iterations were enough
     avg_norm = np.mean(adv_norms)
     median_norm = np.median(adv_norms)
-    print(f"Test Accuracy = {correct} / {attacked} = {final_acc}")
-    print(f"Average L2 Norm: {avg_norm}")
-    print(f"Median L2 Norm: {median_norm}")
+    # print(f"Test Accuracy = {correct} / {attacked} = {final_acc}")
+    # print(f"Average L2 Norm: {avg_norm}")
+    # print(f"Median L2 Norm: {median_norm}")
 
     return final_acc, avg_norm, median_norm
 
@@ -236,8 +238,8 @@ if __name__ == '__main__':
     device = 'cuda'
 
     num_iterations = 300
-    alpha = 0.001
-    gamma = 0.05
+    alpha = 0.05
+    gamma = 0.2
 
     final_acc, avg_norm, median_norm = test_ddn(model, pretrained_path, device, num_iterations, alpha, gamma)
     print('final_acc: ', final_acc)

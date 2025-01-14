@@ -3,3 +3,4 @@ dataset/*
 __pycache__/*
 __pycache__/
 adv_examples/*
+*.png
