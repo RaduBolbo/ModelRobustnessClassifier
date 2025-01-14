@@ -16,6 +16,7 @@ from dataloaders import get_dls
 
 from tqdm import tqdm
 import pickle
+import torchattacks
 
 device = 'cuda'
 
@@ -106,7 +107,7 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
         T.Normalize(mean=mean, std=std),
         ])
     #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.99, 0.01], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.01], num_workers = num_workers)
     test_loader = val_dl
 
     correct = 0
@@ -169,6 +170,73 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
 
     return final_acc, adv_examples
 
+def test_pgd_with_torchattacks(model, pretrained_path, device, epsilon, step_size, num_iterations):
+    batch_size = 1
+    num_workers = 1
+
+    model = model.to(device)
+    if pretrained_path is not None:
+        state_dict = torch.load(pretrained_path)  # Load the state dictionary from the .pth file
+        model.load_state_dict(state_dict)
+
+    root = "dataset/raw-img"
+    mean, std, size = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 224 # media, deviatai standard, diemsniuenaimaginilor
+    val_tfs = T.Compose([T.ToTensor(),
+        T.Resize(size = (size, size),
+        antialias = False),
+        T.Normalize(mean = mean, std = std)])
+    train_tfs = T.Compose([
+        T.RandomHorizontalFlip(p=0.5),
+        T.RandomRotation(degrees=45),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
+        T.ToTensor(),
+        T.RandomResizedCrop(size=(224, 224), scale=(0.7, 1.2)),  
+        T.Resize(size = (size, size),
+        antialias = False),
+        T.Normalize(mean=mean, std=std),
+        ])
+    #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.99, 0.01], num_workers = num_workers)
+
+    correct = 0
+    attacked = 0
+    adv_examples = []
+    model.eval()
+
+    attack = torchattacks.PGD(model, eps=epsilon, alpha=step_size, steps=num_iterations)
+    
+    correct = 0
+    attacked = 0
+    adv_examples = []
+
+    for batch in tqdm(val_dl, desc="Validation"):
+        data = batch["qry_im"].to(device)
+        target = batch["qry_gt"].to(device)
+
+        output = model(data)
+        init_pred = output.max(1, keepdim=True)[1]
+        if init_pred.item() != target.item():
+            continue
+
+        perturbed_data = attack(data, target)
+
+        output = model(perturbed_data)
+        final_pred = output.max(1, keepdim=True)[1]
+
+        attacked += 1
+        if final_pred.item() == target.item():
+            correct += 1
+            if epsilon == 0 and len(adv_examples) < 5:
+                adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
+                adv_examples.append((init_pred.item(), final_pred.item(), adv_ex))
+        else:
+            if len(adv_examples) < 5:
+                adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
+                adv_examples.append((init_pred.item(), final_pred.item(), adv_ex))
+
+    final_acc = correct / float(attacked)
+    print(f"Epsilon: {epsilon}\tTest Accuracy = {correct} / {attacked} = {final_acc}")
+    return final_acc, adv_examples
 
 if __name__ == '__main__':
 
@@ -193,11 +261,21 @@ if __name__ == '__main__':
     #final_acc, adv_examples = test_pgd(model, pretrained_path, device, 0.001, step_size, num_iterations)
     
     #epsilons = [0.00010, 0.00025, 0.00050, 0.00075, 0.00100, 0.002500, 0.00500, 0.00750, 0.001] # **** this may change if somethiong bad is observed
-    epsilons = [0.0025, 0.0050, 0.0075, 0.0100, 0.01250, 0.01500, 0.01750] # **** this may change if somethiong bad is observed
-    for epsilon in epsilons:
-        final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
-        adv_examples_output_path = f'adv_examples/pgd/epsilon={epsilon}_step_size={step_size}_num_iterations={num_iterations}_final_acc={final_acc}.pkl'
-        print(f'Final_ACC = {final_acc} for epsilon = {epsilon}')
-        serialize_adv_examples(adv_examples, adv_examples_output_path)
+    
+    implementation = 'ours'
+    if implementation == 'ours':
+        epsilons = [0.0025, 0.0050, 0.0075, 0.0100, 0.01250, 0.01500, 0.01750] # **** this may change if somethiong bad is observed
+        for epsilon in epsilons:
+            final_acc, adv_examples = test_pgd(model, pretrained_path, device, epsilon, step_size, num_iterations)
+            adv_examples_output_path = f'adv_examples/pgd/epsilon={epsilon}_step_size={step_size}_num_iterations={num_iterations}_final_acc={final_acc}.pkl'
+            print(f'Final_ACC = {final_acc} for epsilon = {epsilon}')
+            serialize_adv_examples(adv_examples, adv_examples_output_path)
+    else:
+        epsilons = [0.0025, 0.0050, 0.0075, 0.0100, 0.01250, 0.01500, 0.01750] # **** this may change if somethiong bad is observed
+        for epsilon in epsilons:
+            final_acc, adv_examples = test_pgd_with_torchattacks(model, pretrained_path, device, epsilon, step_size, num_iterations)
+            adv_examples_output_path = f'adv_examples/pgd_official/epsilon={epsilon}_step_size={step_size}_num_iterations={num_iterations}_final_acc={final_acc}.pkl'
+            print(f'Final_ACC = {final_acc} for epsilon = {epsilon}')
+            serialize_adv_examples(adv_examples, adv_examples_output_path)
 
 

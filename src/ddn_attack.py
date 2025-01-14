@@ -9,6 +9,11 @@ from torchvision import transforms as T
 torch.manual_seed(2024)
 from dataloaders import get_dls
 import torchvision
+import torchattacks
+import foolbox as fb
+
+#from advertorch.attacks import DDNAttack
+
 
 from tqdm import tqdm
 import pickle
@@ -199,7 +204,9 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         attacked += 1
         if not success_status:
             correct += 1
-        # print('success_status: ', success_status)
+        print('success_status----: ', success_status)
+        print('final_pred: ', final_pred)
+        print('target: ', target)
         
         # print('perturbed_data ', torch.max(perturbed_data))
         # print('data ', torch.max(data))
@@ -225,6 +232,91 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
 
     return final_acc, avg_norm, median_norm
 
+def test_ddn_official(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamma=0.05, epsilons=1.0):
+    batch_size = 1
+    num_workers = 1
+
+    # Load the model and pretrained weights
+    model = model.to(device)
+    if pretrained_path is not None:
+        state_dict = torch.load(pretrained_path)  # Load the state dictionary from the .pth file
+        model.load_state_dict(state_dict)
+
+    root = "dataset/raw-img"
+    mean, std, size = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 224
+    val_tfs = T.Compose([
+        T.ToTensor(),
+        T.Resize(size=(size, size), antialias=False),
+        T.Normalize(mean=mean, std=std)
+    ])
+    train_tfs = T.Compose([
+        T.RandomHorizontalFlip(p=0.5),
+        T.RandomRotation(degrees=45),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
+        T.ToTensor(),
+        T.RandomResizedCrop(size=(224, 224), scale=(0.7, 1.2)),
+        T.Resize(size=(size, size), antialias=False),
+        T.Normalize(mean=mean, std=std),
+    ])
+    # Get dataloaders
+    tr_dl, val_dl, classes, cls_counts = get_dls(
+        root=root,
+        train_transformations=train_tfs,
+        val_transformations=val_tfs,
+        batch_size=batch_size,
+        split=[0.99, 0.01],
+        num_workers=num_workers
+    )
+    test_loader = val_dl
+
+    # Wrap the model with Foolbox's PyTorchModel
+    fmodel = fb.PyTorchModel(model, bounds=(0, 1))
+
+    # Initialize DDN attack
+    attack = fb.attacks.DDNAttack(steps=num_iterations)
+
+    correct = 0
+    attacked = 0
+    adv_norms = []
+
+    for batch in tqdm(test_loader, desc="Validation"):
+        data = batch["qry_im"].to(device)
+        target = batch["qry_gt"].to(device)
+
+        # Skip if already misclassified
+        output = model(data)
+        init_pred = output.max(1, keepdim=True)[1]
+        if init_pred.item() != target.item():
+            continue
+
+        # Generate adversarial examples
+        min_val = data.min()
+        max_val = data.max()
+        data = (data - min_val) / (max_val - min_val)
+        perturbed_data = attack(fmodel, data, target, epsilons=epsilons)
+        perturbed_data = perturbed_data[0]
+
+        # Compute L2 norm of perturbation
+        perturbation_norm = torch.norm((data - perturbed_data).view(data.size(0), -1), dim=1).item()
+        adv_norms.append(perturbation_norm)
+
+        # Re-evaluate on the adversarial example
+        output = model(perturbed_data)
+        final_pred = output.max(1, keepdim=True)[1]
+        attacked += 1
+        if final_pred.item() == target.item():
+            correct += 1
+
+    final_acc = correct / float(attacked) if attacked > 0 else 0
+    avg_norm = np.mean(adv_norms) if adv_norms else 0
+    median_norm = np.median(adv_norms) if adv_norms else 0
+
+    print(f"Test Accuracy = {correct} / {attacked} = {final_acc}")
+    print(f"Average L2 Norm: {avg_norm}")
+    print(f"Median L2 Norm: {median_norm}")
+
+    return final_acc, avg_norm, median_norm
+
 if __name__ == '__main__':
 
     #model = VGG10(num_classes=10)
@@ -241,8 +333,14 @@ if __name__ == '__main__':
     alpha = 0.05
     gamma = 0.2
 
-    final_acc, avg_norm, median_norm = test_ddn(model, pretrained_path, device, num_iterations, alpha, gamma)
-    print('final_acc: ', final_acc)
-    print('avg_norm: ', avg_norm)
-    print('median_norm: ', median_norm)
-    
+    implementation = 'ours'
+    if implementation == 'ours':
+        final_acc, avg_norm, median_norm = test_ddn(model, pretrained_path, device, num_iterations, alpha, gamma)
+        print('final_acc: ', final_acc)
+        print('avg_norm: ', avg_norm)
+        print('median_norm: ', median_norm)
+    else:
+        final_acc, avg_norm, median_norm = test_ddn_official(model, pretrained_path, device, num_iterations, alpha, gamma)
+        print('final_acc: ', final_acc)
+        print('avg_norm: ', avg_norm)
+        print('median_norm: ', median_norm)
