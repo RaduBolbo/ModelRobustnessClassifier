@@ -78,7 +78,7 @@ class AttackDefenseClassifier:
         dataset_root,
         attack="PGD",
         pgd_params=PGDParams(0.01, 0.001, 250),  # epsilon, step_size, num_iterations
-        ddn_params=DDNParams(0.001, 0.05, 300),  # alpha, gamma, num_iterations
+        ddn_params=DDNParams(0.05, 0.2, 300),  # alpha, gamma, num_iterations
         defence=None,
         distillation_model=None,
         distillation_temp=1,
@@ -140,7 +140,7 @@ class AttackDefenseClassifier:
                 train_transformations=train_tfs,
                 val_transformations=val_tfs,
                 batch_size=batch_size,
-                split=[0.8, 0.2],
+                split=[0.99, 0.01],
                 num_workers=num_workers,
                 feature_squeezing=True,
             )
@@ -192,7 +192,6 @@ class AttackDefenseClassifier:
                 perturbed_img = last_perturbed_data
             else:
                 perturbed_img = perturbed_data
-            perturbed_img = norm(perturbed_img)
 
         return (True, perturbed_img)
 
@@ -203,39 +202,55 @@ class AttackDefenseClassifier:
 
         return img
 
+    def _bit_reduction(self, img, bits=4):
+        img_np = np.array(img) / 255.0
+        img_np = np.round(img_np * (2**bits - 1))
+        img_np = (img_np / (2**bits - 1) * 255.0).astype(np.uint8)
+        return Image.fromarray(img_np)
+
     def _tensor_to_pil(self, tensor):
         return ToPILImage()(denorm(tensor).detach().cpu().squeeze())
+
+    def _get_squeezed_softmax(self, model, img, sqz_method="median_filter"):
+        if sqz_method == "median_filter":
+            sqz_img = img.filter(ImageFilter.MedianFilter(size=3))
+        elif sqz_method == "bit_reduction":
+            sqz_img = self._bit_reduction(img, 4)
+        elif sqz_method == "resampling":
+            sqz_img = self._resample_img(img)
+
+        # convert to tensor
+        sqz_tensor = val_tfs(sqz_img).unsqueeze(0).to(self.device)
+
+        # inference and softmax
+        sqz_softmax = (
+            nn.functional.softmax(model(sqz_tensor)).detach().cpu().numpy().squeeze()
+        )
+
+        return sqz_softmax
 
     def _defend_feat_squeezing(self, model, perturbed_img, initial_pred, thresh=1.0):
         """Defends model with Feature squeezing. Return False if no attack is detected and true if attack is detected"""
         # median filter and resampling for feature squeezing
         perturbed_pil = self._tensor_to_pil(perturbed_img)
-        median_img = perturbed_pil.filter(ImageFilter.MedianFilter(size=3))
-        resampled_img = self._resample_img(perturbed_pil)
-
-        # apply val transformations
-        median_tesnor = val_tfs(median_img).unsqueeze(0).to(self.device)
-        resampled_tensor = val_tfs(resampled_img).unsqueeze(0).to(self.device)
-
-        # inference and softmax
-        median_out = (
-            nn.functional.softmax(model(median_tesnor)).detach().cpu().numpy().squeeze()
+        median_softmax = self._get_squeezed_softmax(
+            model, perturbed_pil, "median_filter"
         )
-        resampled_out = (
-            nn.functional.softmax(model(resampled_tensor))
-            .detach()
-            .cpu()
-            .numpy()
-            .squeeze()
+        resampled_softmax = self._get_squeezed_softmax(
+            model, perturbed_pil, "resampling"
+        )
+        reduced_softmax = self._get_squeezed_softmax(
+            model, perturbed_pil, "bit_reduction"
         )
 
         # compute L1-norm
         init_pred_softmax = (
             nn.functional.softmax(initial_pred).detach().cpu().numpy().squeeze()
         )
-        median_l1 = np.linalg.norm(init_pred_softmax - median_out, ord=1)
-        resampled_l1 = np.linalg.norm(init_pred_softmax - resampled_out, ord=1)
-        max_l1 = max(median_l1, resampled_l1)
+        median_l1 = np.linalg.norm(init_pred_softmax - median_softmax, ord=1)
+        resampled_l1 = np.linalg.norm(init_pred_softmax - resampled_softmax, ord=1)
+        reduced_l1 = np.linalg.norm(init_pred_softmax - reduced_softmax, ord=1)
+        max_l1 = max(median_l1, resampled_l1, reduced_l1)
 
         if max_l1 < thresh:
             # no attack detected
@@ -269,6 +284,7 @@ class AttackDefenseClassifier:
         # attack metrics
         attack_name = self._get_attack_filename()
         attack_metrics["attack"] = attack_name
+        results["successful_attacks"] = self.attack_successful
         attack_metrics["correct_after_attack"] = self.correct_after_attack
         attack_metrics["model_accuracy"] = (
             self.correct_after_attack / self.total_attacks
@@ -358,30 +374,51 @@ if __name__ == "__main__":
     dataset_root = "/home/ModelRobustnessClassifier/dataset/raw-img"
 
     # pgd_hyperparameters
-    pgd_epsilon = [0.01, 0.02, 0.03, 0.04, 0.05]
+    pgd_epsilon = [0.01, 0.005, 0.015, 0.0025, 0.0075, 0.0125, 0.0175]
     pgd_iter = 100
     pgd_step_size = 0.0001
 
-    # attack with pgd
-    # for eps in pgd_epsilon:
-    #     pgd_params = PGDParams(eps, pgd_step_size, pgd_iter)
-    #     # defence: Feature Squeezing
-    #     processor_sqz = AttackDefenseClassifier(
-    #         pretrained_path,
-    #         dataset_root,
-    #         attack="PGD",
-    #         pgd_params=pgd_params,
-    #         defence="Feat_squeezing",
-    #     )
-    #     processor_sqz.attack_defend()
+    distillation_paths = [
+        "/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp20.pth",
+        "/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp50.pth",
+        "/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp70.pth",
+    ]
+    temps = [20, 50, 70]
 
-    pgd_params = PGDParams(pgd_epsilon[1], pgd_step_size, pgd_iter)
-    processor = AttackDefenseClassifier(
-        pretrained_path,
-        dataset_root,
-        attack="PGD",
-        defence="Distillation",
-        pgd_params=pgd_params,
-        distillation_model="/home/ModelRobustnessClassifier/src/checkpoints/models_temp_1/model_14.pth",
-    )
-    processor.attack_defend()
+    # attack with pgd
+    for eps in pgd_epsilon:
+        pgd_params = PGDParams(eps, pgd_step_size, pgd_iter)
+        # defence: Feature Squeezing
+        processor_sqz = AttackDefenseClassifier(
+            pretrained_path,
+            dataset_root,
+            attack="PGD",
+            pgd_params=pgd_params,
+            defence="Feat_squeezing",
+        )
+        processor_sqz.attack_defend()
+
+        # defence: distillation
+        # for temp, path in zip(temps, distillation_paths):
+        #     processor = AttackDefenseClassifier(
+        #         pretrained_path,
+        #         dataset_root,
+        #         attack="PGD",
+        #         defence="Distillation",
+        #         pgd_params=pgd_params,
+        #         distillation_model=path,
+        #         distillation_temp=temp,
+        #     )
+        #     processor.attack_defend()
+
+    # pgd_params = PGDParams(0.005, pgd_step_size, pgd_iter)
+    # processor = AttackDefenseClassifier(
+    #     pretrained_path,
+    #     dataset_root,
+    #     attack="DDN",
+    #     defence="Distillation",
+    #     pgd_params=pgd_params,
+    #     distillation_model="/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp50.pth",
+    #     distillation_temp=50,
+    # )
+    # processor.attack_defend()
