@@ -6,8 +6,8 @@ from torch.linalg import norm as l2_norm
 import torch
 
 
-pretraiend_path = r'checkpoints\VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
-
+#pretraiend_path = r'checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
+pretraiend_path = r'checkpoints/checkpoints_distillation/checkpoints_distillation/student_temp20.pth'
 
 model = VGG10_lighter(num_classes=10)
 state_dict = torch.load(pretraiend_path)  # Load the state dictionary from the .pth file
@@ -45,7 +45,7 @@ def compute_spectral_norm_dense(weight, num_iters=100):
     sigma = torch.dot(u, torch.matmul(weight, v))  # Approximate largest singular value
     return sigma.item()
 
-def compute_layer_lipschitz(layer):
+def compute_layer_lipschitz(layer, distribution_sigma):
     """
     Compute the Lipschitz constant for a given layer.
     """
@@ -55,9 +55,12 @@ def compute_layer_lipschitz(layer):
         #return l2_norm(layer.weight, ord=2).item() 
         return compute_spectral_norm_dense(layer.weight)
     elif isinstance(layer, torch.nn.BatchNorm2d):
-        #return layer.weight.abs().max().item()  # # **** TO INVESTIGATE
-        # **** here it should be gamma / agerage_sigma of the dataset: justa an aproximation.
-        return 1
+        # Assume `sigma` is provided as a parameter (average_sigma of the dataset)
+        # Compute gamma / sigma
+        #return 1
+        gamma = layer.weight.abs().max().item()  # Absolute value of gamma
+        return gamma / distribution_sigma  # Divide by sigma
+    
     elif isinstance(layer, (torch.nn.ReLU, torch.nn.MaxPool2d)):
         return 1.0
     elif isinstance(layer, torch.nn.PReLU):
@@ -66,21 +69,22 @@ def compute_layer_lipschitz(layer):
     else:
         return 1.0
 
-def compute_network_lipschitz(model):
+def compute_network_lipschitz(model, distribution_sigma):
     """
     Compute the Lipschitz constant for the entire network as the product
     of layer-wise Lipschitz constants.
     """
     lipschitz_constant = 1.0
     for name, module in model.named_modules():
-        layer_lipschitz = compute_layer_lipschitz(module)
+        layer_lipschitz = compute_layer_lipschitz(module, distribution_sigma)
         lipschitz_constant *= layer_lipschitz
         print(f"Layer: {name}, Lipschitz constant: {layer_lipschitz}")
     return lipschitz_constant
 
 
 # Compute the Lipschitz constant
-total_lipschitz_constant = compute_network_lipschitz(model)
+distribution_sigma = 1 # it is not unique. It should be compute dfor each tensor at the input of BatchNorm
+total_lipschitz_constant = compute_network_lipschitz(model, distribution_sigma)
 print(f"Estimated Lipschitz constant for the network: {total_lipschitz_constant}")
 
 """
