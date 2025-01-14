@@ -199,16 +199,16 @@ def test_ddn(model, pretrained_path, device, num_iterations=40, alpha=0.05, gamm
         attacked += 1
         if not success_status:
             correct += 1
-        print('success_status: ', success_status)
+        # print('success_status: ', success_status)
         
-        print('perturbed_data ', torch.max(perturbed_data))
-        print('data ', torch.max(data))
-        data = denorm(data)
-        perturbed_data = denorm(perturbed_data)
-        print(final_pred.item(), target.item())
-        torchvision.utils.save_image(data, 'data.png')
-        torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
-        torchvision.utils.save_image((data-perturbed_data)*1500, 'dif.png')
+        # print('perturbed_data ', torch.max(perturbed_data))
+        # print('data ', torch.max(data))
+        # data = denorm(data)
+        # perturbed_data = denorm(perturbed_data)
+        # print(final_pred.item(), target.item())
+        # torchvision.utils.save_image(data, 'data.png')
+        # torchvision.utils.save_image(perturbed_data, 'perturbed_data.png')
+        # torchvision.utils.save_image((data-perturbed_data)*1500, 'dif.png')
 
 
         # **** uncomment these to find the right hyperaparameters for the attack
