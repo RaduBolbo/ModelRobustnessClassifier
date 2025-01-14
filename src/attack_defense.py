@@ -371,13 +371,45 @@ class AttackDefenseClassifier:
 if __name__ == "__main__":
     model = VGG10_lighter(num_classes=10)
     pretrained_path = "checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth"
+    distillation_model_path = "checkpoints/student_temp70.pth"
     dataset_root = "dataset/raw-img"
 
-    # example of calling the class
+    pgd_params = PGDParams(0.01, 0.001, 250)
+    ddn_params = DDNParams(0.05, 0.2, 300)
+
     processor = AttackDefenseClassifier(
         pretrained_path,
         dataset_root,
         attack="PGD",
+        pgd_params=pgd_params,
         defence="Feat_squeezing",
+    )
+    processor.attack_defend()
+
+    processor = AttackDefenseClassifier(
+        pretrained_path,
+        dataset_root,
+        attack="DDN",
+        ddn_params=ddn_params,
+        defence="Feat_squeezing",
+    )
+    processor.attack_defend()
+
+    processor = AttackDefenseClassifier(
+        pretrained_path,
+        dataset_root,
+        attack="PGD",
+        pgd_params=pgd_params,
+        distillation_model=distillation_model_path,
+        distillation_temp=70,
+    )
+    processor.attack_defend()
+
+    processor = AttackDefenseClassifier(
+        pretrained_path,
+        dataset_root,
+        attack="DDN",
+        distillation_model=distillation_model_path,
+        distillation_temp=70,
     )
     processor.attack_defend()
