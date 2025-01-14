@@ -40,6 +40,8 @@ Defensive distillation steps:
 
 ## Linux setup
 
+Download the dataset and checkpoints from [this](https://ctipub-my.sharepoint.com/:f:/g/personal/cerasela_manolache_stud_etti_upb_ro/Eh1QFsABCsBBhcEd-huGm7YBO-Ts773jnCrabxXKWKVsWA?e=Q3zib9) link. Make sure to unzip raw-img.zip from the dataset directory.
+
 To setup the project run the following commands:
 
 ```bash
@@ -48,9 +50,7 @@ cd ModelRobustnessClassifier/
 ```
 
 The script setup.sh does the following:
-- Installs python3, pip, kaggle and python venv if it does not exist
-- Downloads the dataset from kaggle (one needs to set the username and API key for this to work. Go to kaggle at Settings -> API -> Create New Token. This will download a json file where you can find the username and key. Then go to setup.sh and set the Kaggle credentials)
-- Creates checkpoints directory -> model checkpoints can be found here (to be added)
+- Installs python3, pip and python venv if it does not exist
 - Creates python virtual environment and installs the packages from *requirements.txt*
 
 To run the script:
@@ -63,7 +63,22 @@ Activate the virtual environment:
 source myenv/bin/activate
 ```
 
+## Using the repo
+
+The main script for testing the baseline model with attacks and defenses is attack_defense.py. It contains a class that allows choosing an attack (PGD or DNN) and a defense (Feature Squezzing or Defensive Distillation) and the attack/defense parameters. The script provides some examples on how to use the class. 
+
+To run:
+```bash
+python src/attack_defense.py 
+```
+
+
 To train the baseline model:
 ```bash
 python src/train_loop_baseline.py 
+```
+
+To test a model on the validation set:
+```bash
+python src/evaluate_model.py 
 ```
