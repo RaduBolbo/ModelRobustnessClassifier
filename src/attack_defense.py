@@ -371,54 +371,13 @@ class AttackDefenseClassifier:
 if __name__ == "__main__":
     model = VGG10_lighter(num_classes=10)
     pretrained_path = "checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth"
-    dataset_root = "/home/ModelRobustnessClassifier/dataset/raw-img"
+    dataset_root = "dataset/raw-img"
 
-    # pgd_hyperparameters
-    pgd_epsilon = [0.01, 0.005, 0.015, 0.0025, 0.0075, 0.0125, 0.0175]
-    pgd_iter = 100
-    pgd_step_size = 0.0001
-
-    distillation_paths = [
-        "/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp20.pth",
-        "/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp50.pth",
-        "/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp70.pth",
-    ]
-    temps = [20, 50, 70]
-
-    # attack with pgd
-    for eps in pgd_epsilon:
-        pgd_params = PGDParams(eps, pgd_step_size, pgd_iter)
-        # defence: Feature Squeezing
-        processor_sqz = AttackDefenseClassifier(
-            pretrained_path,
-            dataset_root,
-            attack="PGD",
-            pgd_params=pgd_params,
-            defence="Feat_squeezing",
-        )
-        processor_sqz.attack_defend()
-
-        # defence: distillation
-        # for temp, path in zip(temps, distillation_paths):
-        #     processor = AttackDefenseClassifier(
-        #         pretrained_path,
-        #         dataset_root,
-        #         attack="PGD",
-        #         defence="Distillation",
-        #         pgd_params=pgd_params,
-        #         distillation_model=path,
-        #         distillation_temp=temp,
-        #     )
-        #     processor.attack_defend()
-
-    # pgd_params = PGDParams(0.005, pgd_step_size, pgd_iter)
-    # processor = AttackDefenseClassifier(
-    #     pretrained_path,
-    #     dataset_root,
-    #     attack="DDN",
-    #     defence="Distillation",
-    #     pgd_params=pgd_params,
-    #     distillation_model="/home/ModelRobustnessClassifier/src/checkpoints_distillation/student_temp50.pth",
-    #     distillation_temp=50,
-    # )
-    # processor.attack_defend()
+    # example of calling the class
+    processor = AttackDefenseClassifier(
+        pretrained_path,
+        dataset_root,
+        attack="PGD",
+        defence="Feat_squeezing",
+    )
+    processor.attack_defend()
