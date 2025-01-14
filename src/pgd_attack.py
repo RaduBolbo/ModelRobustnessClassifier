@@ -106,7 +106,7 @@ def test_pgd(model, pretraiend_path, device, epsilon, step_size, num_iterations)
         T.Normalize(mean=mean, std=std),
         ])
     #tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.8, 0.2], num_workers = num_workers)
-    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.995, 0.01], num_workers = num_workers)
+    tr_dl, val_dl, classes, cls_counts = get_dls(root = root, train_transformations = train_tfs, val_transformations = val_tfs, batch_size = batch_size, split = [0.99, 0.01], num_workers = num_workers)
     test_loader = val_dl
 
     correct = 0
