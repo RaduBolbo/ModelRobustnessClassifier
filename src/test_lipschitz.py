@@ -6,15 +6,15 @@ from torch.linalg import norm as l2_norm
 import torch
 
 
-#pretraiend_path = r'checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
-pretraiend_path = r'checkpoints/checkpoints_distillation/checkpoints_distillation/student_temp20.pth'
+pretraiend_path = r'checkpoints/VGG10lightweight_10epchs1e-4_5epochs1e-5.pth'
+#pretraiend_path = r'checkpoints/checkpoints_distillation/checkpoints_distillation/student_temp20.pth'
 
 model = VGG10_lighter(num_classes=10)
 state_dict = torch.load(pretraiend_path)  # Load the state dictionary from the .pth file
 model.load_state_dict(state_dict)
 
 
-def compute_spectral_norm_conv(weight, num_iters=100): # **** choose num_iters high enough so that the value dosn't vary between different runs
+def compute_spectral_norm_conv_naive(weight, num_iters=100): # **** choose num_iters high enough so that the value dosn't vary between different runs
     """
     Compute the spectral norm of a Conv2d layer weight using power iteration.
     """
@@ -28,6 +28,26 @@ def compute_spectral_norm_conv(weight, num_iters=100): # **** choose num_iters h
         u = torch.matmul(weight_matrix, v)
         u = u / torch.norm(u)
     return torch.dot(u, torch.matmul(weight_matrix, v)).item()
+
+def compute_spectral_norm_conv(weight, num_iters=100):
+    '''
+    Impleemntin Gram from "Efficient Bound of Lipschitz Constant for Convolutional Layers by Gram Iteration" (2305.16173)
+    '''
+    weight_fft = torch.fft.fft2(weight, norm='ortho')
+
+    D = weight_fft.permute(2, 3, 0, 1).reshape(-1, weight.shape[0], weight.shape[1])
+
+    r = torch.zeros(D.shape[0], device=weight.device) 
+    for _ in range(num_iters):
+        norm_D = torch.linalg.norm(D, ord='fro', dim=(1, 2), keepdim=True)
+        r += 2 * torch.log(norm_D.squeeze())
+        D = D / norm_D 
+        D = torch.matmul(D.transpose(-1, -2), D) 
+
+    norm_D = torch.linalg.norm(D, ord='fro', dim=(1, 2), keepdim=True)
+    spectral_norm = torch.max(norm_D * torch.exp(r.unsqueeze(-1) * 2 ** (-num_iters))).item()
+
+    return spectral_norm
 
 def compute_spectral_norm_dense(weight, num_iters=100):
     """
